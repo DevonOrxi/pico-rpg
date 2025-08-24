@@ -43,7 +43,7 @@ enemies = {}
 templates = {
   paladin = {
     name = "paladin",
-    m_hp = 100, c_hp = 100,
+    m_hp = 99, c_hp = 99,
     atk  = 7,   def  = 10,
     spd  = 5,   mag  = 4,
     spr  = 1,
@@ -133,14 +133,24 @@ function plan_loop()
 end
 
 function handle_accept()
-	if btn(4) then
+	if btnp(4) then
 		return true
 	end
 	return false
 end
 
 function handle_cancel()
-	if btn(5) then
+	if btnp(5) then
+		if #nav_order_stack == 0 then return true end
+
+		local last_order = nav_order_stack[#nav_order_stack]
+		local inputs = last_order.inputs
+		del(inputs, inputs[#inputs])
+
+		if #inputs == 0 then
+			del(nav_order_stack, last_order)
+		end
+
 		return true
 	end
 	return false
@@ -200,8 +210,19 @@ end
 
 function draw_stats()
 	for i = 1, #players do
+		local stats_x0 = 50
 		local cy = cmd_txt_coords[i].y
-		print(players[i].name, 40, cy, 7)
+		local char = players[i]
+		local hp_str = tostring(char.c_hp)
+		if #hp_str == 1 then
+			hp_str = " " .. hp_str
+		end
+		print(char.name, stats_x0 + 12, cy, 7)
+		print(hp_str .. "/" .. tostring(char.m_hp), stats_x0 + 50, cy, 8)
+		if i <= #nav_order_stack then
+			--señalador de orden completada
+			spr(16, stats_x0, cy - 2)
+		end
 	end
 end
 
