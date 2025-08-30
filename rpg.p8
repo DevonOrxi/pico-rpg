@@ -23,16 +23,28 @@ npc_slots = {
 max_slots = 3
 
 --classes
-cmd = {
-	attack = { name = "attack" },
-	magic = { name = "magic" },
+command = {
+	attack = {
+		name = "attack",
+		tables = {
+			"target"
+		}
+	},
+	skill = {
+		name = "skill",
+		tables = {
+			"skill_sel"
+		}
+	},
 	defend = { name = "defend" }
 }
 
+skill_aux = {}
+
 classes = {
-	paladin = { cmd.attack, cmd.magic, cmd.defend },
-	wizard = { cmd.attack, cmd.magic, cmd.defend },
-	hunter = { cmd.attack, cmd.magic, cmd.defend }
+	paladin = { command.attack, command.skill, command.defend },
+	wizard = { command.attack, command.skill, command.defend },
+	hunter = { command.attack, command.skill, command.defend }
 }
 
 --actor-groups
@@ -41,43 +53,49 @@ enemies = {}
 
 --actor-templates
 templates = {
-  paladin = {
-    name = "paladin",
-    m_hp = 99, c_hp = 99,
-    atk  = 7,   def  = 10,
-    spd  = 5,   mag  = 4,
-    spr  = 1,
-    class = classes.paladin
-  },
+	paladin = {
+		name = "paladin",
+		m_hp = 99, c_hp = 99,
+		atk = 7, def = 10,
+		spd = 5, mag = 4,
+		spr = 1,
+		skillset = classes.paladin
+	},
 
-  wizard = {
-    name = "wizard",
-    m_hp = 50,  c_hp = 50,
-    atk  = 2,   def  = 4,
-    spd  = 3,   mag  = 9,
-    spr  = 1,
-    class = classes.wizard
-  },
+	wizard = {
+		name = "wizard",
+		m_hp = 50, c_hp = 50,
+		atk = 2, def = 4,
+		spd = 3, mag = 9,
+		spr = 1,
+		skillset = classes.wizard
+	},
 
-  hunter = {
-    name = "hunter",
-    m_hp = 70,  c_hp = 70,
-    atk  = 9,   def  = 6,
-    spd  = 8,   mag  = 1,
-    spr  = 1,
-    class = classes.hunter
-  },
+	hunter = {
+		name = "hunter",
+		m_hp = 70, c_hp = 70,
+		atk = 9, def = 6,
+		spd = 8, mag = 1,
+		spr = 1,
+		skillset = classes.hunter
+	},
 
-  boss = {
-    name = "boss",
-    m_hp = 2000, c_hp = 2000,
-    atk  = 10,   def  = 5,
-    spd  = 5,    mag  = 5,
-    spr  = 64
-  }
+	boss = {
+		name = "boss",
+		m_hp = 2000, c_hp = 2000,
+		atk = 10, def = 5,
+		spd = 5, mag = 5,
+		spr = 64
+	}
 }
 --navigation
 nav_order_stack = {}
+nav_table_pointer = ""
+nav_cursor_ix = 1
+current_order = nil
+nav_command_table_ix = 0
+nav_current_table = {}
+show_flags = {}
 
 --#pub-func
 function _init()
@@ -90,26 +108,44 @@ function _init()
 	nav_order_stack = {
 		--PLACEHOLDER
 		{
-			char = pc_slots[1],
 			inputs = {
-				{type="command", input=1},
-				{type="target", input=1}
+				{ type = "command", input = 1 },
+				{ type = "target", input = 1 }
 			}
 		},
 		{
-			char = pc_slots[2],
 			inputs = {
-				{type="command", input=2},
-				{type="skill", input=1},
-				{type="target", input=1}
+				{ type = "command", input = 2 },
+				{ type = "skill_sel", input = 1 },
+				{ type = "target", input = 1 }
 			}
 		}
 	}
+
+	show_flags = {
+		command = {
+			ui_command = draw_command_texts,
+			ui_stats = draw_stats
+		},
+		target = { 
+			ui_command = draw_command_texts,
+			ui_stats = draw_stats
+		},
+		skill_sel = { 
+			ui_skill_sel = draw_skill_sel
+		}
+	}
+
+	nav_table_pointer = "command"
+	nav_cursor_ix = 1
+	nav_current_table = command
 end
 
 function _update()
 	if b_status == "plan" then
 		plan_loop()
+	elseif b_status == "exec" then
+		print("EXEC")
 	end
 end
 
@@ -119,54 +155,166 @@ function _draw()
 	spr(64, npc_slots[1].x, npc_slots[1].y, 2, 2)
 	draw_party()
 	draw_ui()
+	-- debug:
+	print("cursor:"..tostr(nav_cursor_ix), 90, 3, 7)
 end
 
 --#prv-func
 function plan_loop()
-	local cur_mov = calc_movement()
-
 	if not handle_accept() then
 		if not handle_cancel() then
-			local cur_mov = calc_movement()
+			handle_movement()
 		end
 	end
 end
 
+-- ===== helpers de estado =====
+function cur_char_ix()
+	-- con opción B, el PJ actual es siempre el siguiente al último del stack
+	return #nav_order_stack + 1
+end
+
+function char_for_current()
+	return players[cur_char_ix()]
+end
+
+function get_chain_for_partial()
+	-- devuelve la cadena de submenús de la orden parcial actual (o vacía)
+	if not current_order or #current_order.inputs == 0 then
+		return {}
+	end
+	local char = char_for_current()
+	if not char then
+		return {}
+	end
+	local cmd_ix = current_order.inputs[1].input
+	local cmd = char.skillset[cmd_ix]
+	return (cmd and cmd.tables) or {}
+end
+
+function derive_pointer_from_inputs(inputs)
+	-- setea nav_table_pointer/nav_cursor_ix según el último input de "inputs"
+	if not inputs or #inputs == 0 then
+		nav_table_pointer = "command"
+		nav_cursor_ix = 1
+		return
+	end
+	local last = inputs[#inputs]
+	nav_table_pointer = last.type
+	nav_cursor_ix = last.input
+end
+
+-- cuando terminamos una orden parcial, la pusheamos al stack y preparamos el siguiente PJ
+function finalize_partial_and_advance()
+	if current_order and #current_order.inputs > 0 then
+		add(nav_order_stack, current_order)
+	end
+	current_order = nil
+
+	if #nav_order_stack >= #players then
+		b_status = "exec"
+	else
+		nav_table_pointer = "command"
+		nav_cursor_ix = 1
+	end
+end
+
+function push_step_and_advance()
+	add(current_order.inputs, { type = nav_table_pointer, input = nav_cursor_ix })
+
+	local chain = get_chain_for_partial()
+	local steps_done = #current_order.inputs - 1
+
+	if steps_done >= #chain then
+		finalize_partial_and_advance()
+	else
+		nav_table_pointer = chain[steps_done + 1]
+		nav_cursor_ix = 1
+	end
+end
+
+-- ===== aceptar (A) =====
 function handle_accept()
-	if btnp(4) then
-		return true
+	if not btnp(4) then return false end
+
+	local char = char_for_current()
+	if not char then return true end
+
+	if nav_table_pointer == "command" then
+		local cmd = char.skillset[nav_cursor_ix]
+		if not cmd then return false end
 	end
-	return false
+
+	if not current_order then
+		current_order = { inputs = {} }
+	end
+
+	push_step_and_advance()
+	return true
 end
 
+-- ===== cancelar (B) =====
 function handle_cancel()
-	if btnp(5) then
-		if #nav_order_stack == 0 then return true end
+	if not btnp(5) then return false end
 
-		local last_order = nav_order_stack[#nav_order_stack]
-		local inputs = last_order.inputs
-		del(inputs, inputs[#inputs])
+	-- 1) Si hay orden parcial, deshacer dentro de ella
+	if current_order and #current_order.inputs > 0 then
+		del(current_order.inputs, current_order.inputs[#current_order.inputs])
 
-		if #inputs == 0 then
-			del(nav_order_stack, last_order)
+		if #current_order.inputs == 0 then
+			-- ya no queda nada parcial -> volver al comando
+			current_order = nil
+			nav_table_pointer = "command"
+			nav_cursor_ix = 1
+		else
+			-- volver al paso anterior dentro de la parcial
+			derive_pointer_from_inputs(current_order.inputs)
 		end
-
 		return true
 	end
-	return false
+
+	-- 2) Si no hay parcial, podemos “recuperar” la última completa del stack
+	if not current_order and #nav_order_stack > 0 then
+		current_order = nav_order_stack[#nav_order_stack]
+		del(nav_order_stack, current_order)
+		-- ahora estamos “dentro” de esa orden y podemos seguir deshaciendo
+		derive_pointer_from_inputs(current_order.inputs)
+		return true
+	end
+
+	-- 3) No hay nada que deshacer: asegurar UI base
+	nav_table_pointer = "command"
+	nav_cursor_ix = 1
+	return true
 end
 
-function calc_movement()
-	local cpx = 0
-	local cpy = 0
-	if btn(0) then cpx += 1 end
-	if btn(1) then cpx -= 1 end
-	if btn(2) then cpy -= 1 end
-	if btn(3) then cpy += 1 end
-
-	return { dx = cpx, dy = cpy }
+-- ===== movimiento =====
+function handle_movement()
+	local d = 0
+	if btnp(2) then d = -1 end
+	if btnp(3) then d = 1 end
+	if d == 0 then return end
+	nav_cursor_ix = (nav_cursor_ix + d - 1) % current_table_size() + 1
 end
 
+function current_table_size()
+	local char = char_for_current()
+	if not char then return 1 end
+
+	if nav_table_pointer == "command" then
+		return #char.skillset
+	elseif nav_table_pointer == "skill_sel" then
+		-- TODO: tamaño real del menú de skills del comando elegido
+		return 1
+	elseif nav_table_pointer == "target" then
+		-- TODO: cantidad de objetivos válidos
+		return 1
+	end
+
+	return 1
+end
+
+-- ===== dibujo =====
 function draw_back()
 	rectfill(0, 0, 127, 35, 12)
 	rectfill(0, 36, 127, 127, 3)
@@ -175,36 +323,34 @@ end
 function draw_party()
 	local n = min(#pc_slots, #players)
 	for i = 1, n do
-		local char = players[i]
+		local ch = players[i]
 		local slot = pc_slots[i]
-		spr(char.spr or 1, char.x or slot.x, char.y or slot.y)
+		spr(ch.spr or 1, ch.x or slot.x, ch.y or slot.y)
 	end
 end
 
 function draw_ui()
 	draw_rounded_rect(0, 0, 127, 10, 1)
+	print(nav_table_pointer, 5, 3, 7)
 	draw_rounded_rect(0, 95, 127, 127, 1)
-
-	print('ready', 5, 3, 7)
-
-	draw_command_texts()
-	draw_stats()
+	if b_status ~= "plan" then return end
+	local flags = show_flags[nav_table_pointer]
+	if flags then
+		for _, fn in pairs(flags) do fn() end
+	end
 end
 
 function draw_command_texts()
-	if b_status == "plan" then
-		local cmd_ix = #nav_order_stack + 1
-    if cmd_ix <= #players then
-      local cur_char = players[cmd_ix]
-      local cur_cmds = cur_char.class
-
-      for i = 1, #cur_cmds do
-				local coords = cmd_txt_coords[i]
-        print(cur_cmds[i].name, coords.x, coords.y, 7)
-      end
-
-      spr(129, 0, 99) -- por ahora
-    end
+	local ix = cur_char_ix()
+	if ix <= #players then
+		local cur_char = players[ix]
+		local cur_cmds = cur_char.skillset
+		for i = 1, #cur_cmds do
+			local coords = cmd_txt_coords[i]
+			print(cur_cmds[i].name, coords.x, coords.y, 7)
+		end
+		local coords = cmd_txt_coords[nav_cursor_ix]
+		spr(129, coords.x - 10, coords.y - 1)
 	end
 end
 
@@ -212,21 +358,32 @@ function draw_stats()
 	for i = 1, #players do
 		local stats_x0 = 50
 		local cy = cmd_txt_coords[i].y
-		local char = players[i]
-		local hp_str = tostring(char.c_hp)
-		if #hp_str == 1 then
-			hp_str = " " .. hp_str
+		local ch = players[i]
+		local hp_str = tostr(ch.c_hp)
+		if #hp_str == 1 then hp_str = " " .. hp_str end
+
+		local done_count = #nav_order_stack
+		
+		if i == cur_char_ix() then
+			print(ch.name, stats_x0 + 12, cy, 2)
+			print(ch.name, stats_x0 + 12, cy - 1, 7)
+		else 
+			print(ch.name, stats_x0 + 12, cy, 6)
 		end
-		print(char.name, stats_x0 + 12, cy, 7)
-		print(hp_str .. "/" .. tostring(char.m_hp), stats_x0 + 50, cy, 8)
-		if i <= #nav_order_stack then
-			--señalador de orden completada
+
+		print(hp_str .. "/" .. tostr(ch.m_hp), stats_x0 + 50, cy, 8)
+
+		if i > 0 and i <= done_count then
 			spr(16, stats_x0, cy - 2)
 		end
 	end
 end
 
---#helpers
+function draw_skill_sel()
+	print("skills go here", 10, 100, 7)
+end
+
+-- ===== helpers varios =====
 function tcopy(t)
 	local r = {}
 	for k, v in pairs(t) do
