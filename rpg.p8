@@ -93,8 +93,6 @@ nav_order_stack = {}
 nav_table_pointer = ""
 nav_cursor_ix = 1
 current_order = nil
-nav_command_table_ix = 0
-nav_current_table = {}
 show_flags = {}
 
 --#pub-func
@@ -138,7 +136,6 @@ function _init()
 
 	nav_table_pointer = "command"
 	nav_cursor_ix = 1
-	nav_current_table = command
 end
 
 function _update()
