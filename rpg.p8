@@ -36,15 +36,36 @@ command = {
 			"skill_sel"
 		}
 	},
-	defend = { name = "defend" }
+	magic = {
+		name = "magic",
+		tables = {
+			"skill_sel"
+		}
+	},
+	defend = { name = "defend" },
+	protect = { name = "protect",
+		tables = {
+			"target"
+		}
+	},
+	fireball = { name = "fireball",
+		tables = {
+			"target"
+		}
+	},
+	icicle = { name = "icicle",
+		tables = {
+			"target"
+		}
+	}
 }
 
 skill_aux = {}
 
 classes = {
-	paladin = { command.attack, command.skill, command.defend },
-	wizard = { command.attack, command.skill, command.defend },
-	hunter = { command.attack, command.skill, command.defend }
+	paladin = { command.attack, command.skill, command.protect },
+	wizard = { command.attack, command.magic, command.defend },
+	druid = { command.attack, command.magic, command.defend }
 }
 
 --actor-groups
@@ -59,7 +80,10 @@ templates = {
 		atk = 7, def = 10,
 		spd = 5, mag = 4,
 		spr = 1,
-		skillset = classes.paladin
+		skillset = classes.paladin,
+		learned = {
+
+		}
 	},
 
 	wizard = {
@@ -68,16 +92,20 @@ templates = {
 		atk = 2, def = 4,
 		spd = 3, mag = 9,
 		spr = 1,
-		skillset = classes.wizard
+		skillset = classes.wizard,
+		learned = {
+			fireball = "fireball",
+			icicle = "icicle"
+		}
 	},
 
-	hunter = {
-		name = "hunter",
+	druid = {
+		name = "druid",
 		m_hp = 70, c_hp = 70,
 		atk = 9, def = 6,
 		spd = 8, mag = 1,
 		spr = 1,
-		skillset = classes.hunter
+		skillset = classes.druid
 	},
 
 	boss = {
@@ -100,7 +128,7 @@ function _init()
 	players = {
 		instance_char(templates.paladin, pc_slots[1]),
 		instance_char(templates.wizard, pc_slots[2]),
-		instance_char(templates.hunter, pc_slots[3])
+		instance_char(templates.druid, pc_slots[3])
 	}
 
 	nav_order_stack = {
