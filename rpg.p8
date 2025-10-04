@@ -4,6 +4,9 @@ __lua__
 --#globals
 b_status = "plan"
 
+exec_queue = {}
+exec_state = nil
+
 pc_slots = {
 	{ x = 85, y = 62 },
 	{ x = 103, y = 41 },
@@ -36,26 +39,16 @@ command = {
 			"skill_sel"
 		}
 	},
-	magic = {
-		name = "magic",
+	defend = {
+		name = "defend",
 		tables = {
-			"skill_sel"
+			"target_self"
 		}
 	},
-	defend = { name = "defend" },
-	protect = { name = "protect",
+	dummy = {
+		name = "dummy",
 		tables = {
-			"target"
-		}
-	},
-	fireball = { name = "fireball",
-		tables = {
-			"target"
-		}
-	},
-	icicle = { name = "icicle",
-		tables = {
-			"target"
+			"target_self"
 		}
 	}
 }
@@ -63,9 +56,9 @@ command = {
 skill_aux = {}
 
 classes = {
-	paladin = { command.attack, command.skill, command.protect },
-	wizard = { command.attack, command.magic, command.defend },
-	druid = { command.attack, command.magic, command.defend }
+	paladin = { command.attack, command.skill, command.defend },
+	wizard = { command.attack, command.skill, command.defend },
+	druid = { command.attack, command.skill, command.defend }
 }
 
 --actor-groups
@@ -94,8 +87,7 @@ templates = {
 		spr = 1,
 		skillset = classes.wizard,
 		learned = {
-			fireball = "fireball",
-			icicle = "icicle"
+			fireball = "fireball"
 		}
 	},
 
@@ -113,9 +105,19 @@ templates = {
 		m_hp = 2000, c_hp = 2000,
 		atk = 10, def = 5,
 		spd = 5, mag = 5,
-		spr = 64
+		spr = 64,
+		anchors = {
+			fx = {
+				x = 8,
+				y = 9
+			}
+		}
 	}
 }
+
+--ui-animation
+dmg_counters = {}
+
 --navigation
 nav_order_stack = {}
 nav_table_pointer = ""
@@ -129,6 +131,10 @@ function _init()
 		instance_char(templates.paladin, pc_slots[1]),
 		instance_char(templates.wizard, pc_slots[2]),
 		instance_char(templates.druid, pc_slots[3])
+	}
+
+	enemies = {
+		instance_char(templates.boss, npc_slots[1])
 	}
 
 	nav_order_stack = {
@@ -170,21 +176,35 @@ function _update()
 	if b_status == "plan" then
 		plan_loop()
 	elseif b_status == "exec" then
-		print("EXEC")
+		exec_loop()
 	end
 end
 
 function _draw()
 	cls()
 	draw_back()
-	spr(64, npc_slots[1].x, npc_slots[1].y, 2, 2)
+	spr(enemies[1].spr, enemies[1].x, enemies[1].y, 2, 2)
 	draw_party()
 	draw_ui()
 	-- debug:
 	print("cursor:"..tostr(nav_cursor_ix), 90, 3, 7)
 end
 
---#prv-func
+function update_exec_timers()
+	for i = #dmg_counters, 1, -1 do
+        local elem = dmg_counters[i]
+        elem.timer -= 1
+        
+        if elem.timer <= 0 then
+            deli(dmg_counters, i)
+        end
+    end
+end
+
+function update_exec_loop()
+	update_exec_timers()
+end
+
 function plan_loop()
 	if not handle_accept() then
 		if not handle_cancel() then
@@ -193,7 +213,11 @@ function plan_loop()
 	end
 end
 
--- ===== helpers de estado =====
+function exec_loop()
+	update_exec_loop()
+end
+
+-- ===== helpers de estado - PLAN =====
 function cur_char_ix()
 	-- con opción B, el PJ actual es siempre el siguiente al último del stack
 	return #nav_order_stack + 1
@@ -237,7 +261,7 @@ function finalize_partial_and_advance()
 	current_order = nil
 
 	if #nav_order_stack >= #players then
-		b_status = "exec"
+		start_exec_phase()
 	else
 		nav_table_pointer = "command"
 		nav_cursor_ix = 1
@@ -339,6 +363,30 @@ function current_table_size()
 	return 1
 end
 
+-- ===== execution =====
+function build_exec_queue()
+	add_damage_counter()
+end
+
+function add_damage_counter()
+	-- local boss_anchor = get_char_facing_floor_pos()
+	local boss = enemies[1]
+	if not boss then return end
+
+	local boss_anchor = get_char_fx_pos(boss)
+	if boss_anchor then
+		local final_x = boss_anchor.x + boss.x - (2 * 3 + 1) / 2
+		local final_y = boss_anchor.y + boss.y - 10
+		add(dmg_counters, { text = "58", cx = final_x, cy = final_y, color = 7, vo_x = 0, vo_y = 0, timer = seconds(5), ao_x = 0, ao_y = 0 })
+	end
+end
+
+function start_exec_phase()
+	exec_queue = build_exec_queue()
+	exec_state = { ix = 1, phase = "start", t = 0 }
+	b_status = "exec"
+end
+
 -- ===== dibujo =====
 function draw_back()
 	rectfill(0, 0, 127, 35, 12)
@@ -354,14 +402,28 @@ function draw_party()
 	end
 end
 
-function draw_ui()
+function draw_planning_ui()
 	draw_rounded_rect(0, 0, 127, 10, 1)
 	print(nav_table_pointer, 5, 3, 7)
 	draw_rounded_rect(0, 95, 127, 127, 1)
-	if b_status ~= "plan" then return end
 	local flags = show_flags[nav_table_pointer]
 	if flags then
 		for _, fn in pairs(flags) do fn() end
+	end
+end
+
+function draw_execution_ui()
+	for i = 1, #dmg_counters do
+		local dmg = dmg_counters[i]
+		print(dmg.text, dmg.cx, dmg.cy, dmg.color)
+	end
+end
+
+function draw_ui()
+	if b_status == "plan" then
+		draw_planning_ui()
+	elseif b_status == "exec" then
+		draw_execution_ui()
 	end
 end
 
@@ -409,6 +471,23 @@ function draw_skill_sel()
 end
 
 -- ===== helpers varios =====
+function get_char_fx_pos(char)
+	if char then
+		local char_ax = char.anchors.fx.x
+		local char_ay = char.anchors.fx.y
+
+		if char_ax and char_ay then
+			return { x = char_ax, y = char_ay }
+		end
+	end
+
+	return nil
+end
+
+function seconds(s)
+	return s * stat(7)
+end
+
 function tcopy(t)
 	local r = {}
 	for k, v in pairs(t) do
