@@ -109,7 +109,7 @@ templates = {
 		anchors = {
 			fx = {
 				x = 8,
-				y = 9
+				y = 8
 			}
 		}
 	}
@@ -190,21 +190,6 @@ function _draw()
 	print("cursor:"..tostr(nav_cursor_ix), 90, 3, 7)
 end
 
-function update_exec_timers()
-	for i = #dmg_counters, 1, -1 do
-        local elem = dmg_counters[i]
-        elem.timer -= 1
-        
-        if elem.timer <= 0 then
-            deli(dmg_counters, i)
-        end
-    end
-end
-
-function update_exec_loop()
-	update_exec_timers()
-end
-
 function plan_loop()
 	if not handle_accept() then
 		if not handle_cancel() then
@@ -215,6 +200,28 @@ end
 
 function exec_loop()
 	update_exec_loop()
+end
+
+function update_exec_loop()
+	update_exec_timers()
+end
+
+function update_exec_timers()
+	for i = #dmg_counters, 1, -1 do
+        local elem = dmg_counters[i]
+		if elem then
+			elem.timer -= 1
+			
+			if elem.timer <= 0 then
+				deli(dmg_counters, i)
+			else
+				elem.vx += elem.ax
+				elem.vy += elem.ay
+				elem.x += elem.vx
+				elem.y += elem.vy
+			end
+		end
+    end
 end
 
 -- ===== helpers de estado - PLAN =====
@@ -377,7 +384,21 @@ function add_damage_counter()
 	if boss_anchor then
 		local final_x = boss_anchor.x + boss.x - (2 * 3 + 1) / 2
 		local final_y = boss_anchor.y + boss.y - 10
-		add(dmg_counters, { text = "58", cx = final_x, cy = final_y, color = 7, vo_x = 0, vo_y = 0, timer = seconds(5), ao_x = 0, ao_y = 0 })
+
+		add(dmg_counters, {
+			text = "58",
+			x = final_x,
+			y = final_y,
+			color_fg = 7,
+			color_bg = 1,
+			color_fg_fade = 6,
+			color_bg_fade = 0,
+			vx = 0,
+			vy = -2.5,
+			timer = seconds(0.8),
+			ax = 0.025,
+			ay = 0.25
+		})
 	end
 end
 
@@ -413,9 +434,20 @@ function draw_planning_ui()
 end
 
 function draw_execution_ui()
+	draw_damage_counters()
+end
+
+function draw_damage_counters()
 	for i = 1, #dmg_counters do
 		local dmg = dmg_counters[i]
-		print(dmg.text, dmg.cx, dmg.cy, dmg.color)
+
+		if dmg.vy <= 0 then
+			print(dmg.text, dmg.x, dmg.y, dmg.color_bg_fade)
+			print(dmg.text, dmg.x, dmg.y - 1, dmg.color_fg)
+		else
+			print(dmg.text, dmg.x, dmg.y, dmg.color_bg)
+			print(dmg.text, dmg.x, dmg.y - 1, dmg.color_fg_fade)
+		end
 	end
 end
 
