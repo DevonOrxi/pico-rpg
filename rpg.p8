@@ -3,6 +3,8 @@ version 42
 __lua__
 --#globals
 b_status = "plan"
+flashing_screen = false
+flashing_color = 7
 
 exec_queue = {}
 exec_state = nil
@@ -31,6 +33,19 @@ command = {
 		name = "attack",
 		tables = {
 			"target"
+		},
+		exec = {
+			now = {
+				tasks = {
+					--wait
+					--animate dramatic pose
+					--flash screen + sound + move player
+					--wait
+					--screen shake + slash + damage counter
+					--wait
+				},
+				finished = "false"
+			}
 		}
 	},
 	skill = {
@@ -125,6 +140,9 @@ nav_cursor_ix = 1
 current_order = nil
 show_flags = {}
 
+--execution
+execution_tasks = {}
+
 --#pub-func
 function _init()
 	players = {
@@ -170,6 +188,33 @@ function _init()
 
 	nav_table_pointer = "command"
 	nav_cursor_ix = 1
+
+	update_task_functions = {
+		waiter = {
+			execute = function(task)
+				if task.type == "waiter" then
+					if task.counter then
+						task.counter = task.counter - 1
+						if task.counter <= 0 then
+							task.finished = true
+						end
+					end
+				end
+			end
+		}
+		,
+
+		flash_screen = {
+			execute = function(task)
+				flash_screen = true
+				flashing_color = task.color or 7
+				local next = update_task_functions.waiter
+				next.counter = 0.5*30
+				task.next = next
+				task.finished = true
+			end
+		}
+	}
 end
 
 function _update()
@@ -204,6 +249,7 @@ end
 
 function update_exec_loop()
 	update_exec_timers()
+	update_exec_tasks()
 end
 
 function update_exec_timers()
@@ -224,6 +270,27 @@ function update_exec_timers()
     end
 end
 
+function update_exec_tasks()
+	for i = 1, #execution_tasks do
+		local task = execution_tasks[i]
+		update_task(task)
+	end
+end
+
+function update_task(task)
+	local task_type = task_functions[task.type]
+	if not task.type then return task
+
+	local task_function = task_functions[task_type]
+	if task_function then return task
+
+	task_function.execute(task)
+
+	if task.finished and task.next then
+		add(execution_tasks, task.next)
+	end
+end
+
 -- ===== helpers de estado - PLAN =====
 function cur_char_ix()
 	-- con opción B, el PJ actual es siempre el siguiente al último del stack
@@ -235,7 +302,7 @@ function char_for_current()
 end
 
 function get_chain_for_partial()
-	-- devuelve la cadena de submenús de la orden parcial actual (o vacía)
+	-- devuelve la cadena de submenれむs de la orden parcial actual (o vacía)
 	if not current_order or #current_order.inputs == 0 then
 		return {}
 	end
@@ -249,7 +316,7 @@ function get_chain_for_partial()
 end
 
 function derive_pointer_from_inputs(inputs)
-	-- setea nav_table_pointer/nav_cursor_ix según el último input de "inputs"
+	-- setea nav_table_pointer/nav_cursor_ix según el れむltimo input de "inputs"
 	if not inputs or #inputs == 0 then
 		nav_table_pointer = "command"
 		nav_cursor_ix = 1
@@ -329,11 +396,11 @@ function handle_cancel()
 		return true
 	end
 
-	-- 2) Si no hay parcial, podemos “recuperar” la última completa del stack
+	-- 2) Si no hay parcial, podemos recuperars la れむltima completa del stack
 	if not current_order and #nav_order_stack > 0 then
 		current_order = nav_order_stack[#nav_order_stack]
 		del(nav_order_stack, current_order)
-		-- ahora estamos “dentro” de esa orden y podemos seguir deshaciendo
+		-- ahora estamos dentro de esa orden y podemos seguir deshaciendo
 		derive_pointer_from_inputs(current_order.inputs)
 		return true
 	end
@@ -360,7 +427,7 @@ function current_table_size()
 	if nav_table_pointer == "command" then
 		return #char.skillset
 	elseif nav_table_pointer == "skill_sel" then
-		-- TODO: tamaño real del menú de skills del comando elegido
+		-- TODO: tamaれねo real del menú de skills del comando elegido
 		return 1
 	elseif nav_table_pointer == "target" then
 		-- TODO: cantidad de objetivos válidos
@@ -376,7 +443,7 @@ function build_exec_queue()
 end
 
 function add_damage_counter()
-	-- local boss_anchor = get_char_facing_floor_pos()
+	local boss_anchor = get_char_facing_floor_pos()
 	local boss = enemies[1]
 	if not boss then return end
 
@@ -544,14 +611,14 @@ function draw_rounded_rect(x0, y0, x1, y1, c)
 end
 
 __gfx__
-00000000000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000ff10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000fff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000700110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000072111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000007211000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000001101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000011100000000000000000000000000000000000011100000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000ff100000111000001110000011100000011100000fff0000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000fff0000ff100000ff100000ff1000000ff1000000fff0000000000000000000000000000000000000000000000000000000000000000000000000
+000000000700440000fff00000fff00000fff000000fff0000004400000000000000000000000000000000000000000000000000000000000000000000000000
+00000000007211100004410000044000000440007700440007011110000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000721100001220000021100002911000077210000721110000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000014550000145500002455000274550000145500072145000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000110100001101000011010001109100001011000001010000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0aa00a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
