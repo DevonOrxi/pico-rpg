@@ -2,6 +2,16 @@ pico-8 cartridge // http://www.pico-8.com
 version 42
 __lua__
 --#globals
+
+tps = 4 -- ticks por frame de animación (copiado de ani.p8)
+
+-- anims básicas, mismas que en ani.p8
+default_player_anim_frames = {
+  idle = { 1 },
+  prep_atk = { 2 },
+  attack = { 3, 4, 5 }
+}
+
 b_status = "plan"
 flashing_screen = false
 flashing_color = 7
@@ -88,10 +98,7 @@ templates = {
 		atk = 7, def = 10,
 		spd = 5, mag = 4,
 		spr = 1,
-		skillset = classes.paladin,
-		learned = {
-
-		}
+		skillset = classes.paladin
 	},
 
 	wizard = {
@@ -142,6 +149,179 @@ show_flags = {}
 
 --execution
 execution_tasks = {}
+
+-- ===== TASK MANAGER (COROUTINAS) =====
+
+taskmgr = {
+  executing = {},
+  queue = {}
+}
+
+function new_task(args)
+  local t = {
+    state = "awaiting",
+    next = args.next,
+    on_start = args.on_start,
+    on_tick = args.on_tick,
+    is_finished = args.is_finished,
+    on_done = args.on_done
+  }
+
+  t.co = cocreate(function()
+    t.state = "executing"
+    if t.on_start then t:on_start() end
+
+    -- si no hay on_tick, el task termina enseguida
+    local finished = false or not t.on_tick
+
+    while not finished do
+      t:on_tick()
+
+      if t.is_finished then
+        finished = t:is_finished()
+      else
+        finished = true
+      end
+
+      yield()
+    end
+
+    if t.on_done then t:on_done() end
+  end)
+
+  return t
+end
+
+function taskmgr.add(t)
+  add(taskmgr.queue, t)
+end
+
+local function start_queued()
+  for t in all(taskmgr.queue) do
+    add(taskmgr.executing, t)
+    del(taskmgr.queue, t)
+  end
+end
+
+local function tick_executing()
+  for t in all(taskmgr.executing) do
+    local ok, err = coresume(t.co)
+
+    -- si explota la corutina, la sacamos
+    if not ok then
+      -- opcional: printh(err)
+      del(taskmgr.executing, t)
+
+    -- si terminó normalmente
+    elseif costatus(t.co) == "dead" then
+      if t.next then
+        -- permitir secuencias: t.next = {t2, t3, ...} o un solo task
+        if type(t.next) == "table" and t.next[1] then
+          for nt in all(t.next) do
+            taskmgr.add(nt)
+          end
+        else
+          taskmgr.add(t.next)
+        end
+      end
+
+      del(taskmgr.executing, t)
+    end
+  end
+end
+
+function taskmgr.update()
+  start_queued()
+  tick_executing()
+end
+
+function await(secs)
+  -- en ani.p8 estaba hardcodeado a 30 fps
+  -- lo dejo igual por ahora para que el comportamiento sea el mismo
+  local frames = max(0, flr((secs or 0) * 30 + 0.5))
+  for i=1, frames do
+    yield()
+  end
+end
+
+function lerp_char_pos(c, tx, ty, seconds)
+  local sx, sy = c.x, c.y
+  local frames = max(1, flr(seconds * stat(7) + 0.5))
+
+  for i=1,frames do
+    local t = i / frames
+    c.x = sx + (tx - sx) * t
+    c.y = sy + (ty - sy) * t
+    yield()
+  end
+
+  c.x, c.y = tx, ty
+end
+
+function init_actor_anim(a, anim_frames)
+  a.anim = {
+    id = "idle",
+    frame = 1,
+    ticker = 0,
+    -- en ani.p8, si looping es nil, no loopea; lo respetamos
+    looping = true
+  }
+  a.is_flashing = 0
+  a.anim_frame_data = anim_frames or default_player_anim_frames
+end
+
+function update_actor_anim(a)
+  if not a or not a.anim or not a.anim_frame_data then
+    return
+  end
+
+  a.anim.ticker += 1
+
+  if a.anim.ticker >= tps then
+    a.anim.ticker = 0
+    local cur = a.anim_frame_data[a.anim.id]
+    if not cur then return end
+
+    a.anim.frame += 1
+    if a.anim.frame > #cur then
+      if a.anim.looping then
+        a.anim.frame = 1
+      else
+        a.anim.frame = #cur
+      end
+    end
+
+    a.spr = cur[a.anim.frame]
+  end
+end
+
+function update_anims()
+  -- players
+  if players then
+    for p in all(players) do
+      update_actor_anim(p)
+    end
+  end
+
+  -- enemies (por ahora sólo los que tengan anim definida)
+  if enemies then
+    for e in all(enemies) do
+      update_actor_anim(e)
+    end
+  end
+end
+
+function start_actor_anim(a, anim_id, looping)
+  if not a or not a.anim then return end
+
+  a.anim.id = anim_id
+  a.anim.frame = 1
+  a.anim.ticker = 0
+
+  if looping ~= nil then
+    a.anim.looping = looping
+  end
+end
 
 --#pub-func
 function _init()
@@ -201,8 +381,7 @@ function _init()
 					end
 				end
 			end
-		}
-		,
+		},
 
 		flash_screen = {
 			execute = function(task)
@@ -218,12 +397,20 @@ function _init()
 end
 
 function _update()
-	if b_status == "plan" then
-		plan_loop()
-	elseif b_status == "exec" then
-		exec_loop()
-	end
+  -- primero, corutinas generales (timelines, tweens, etc.)
+  taskmgr.update()
+
+  -- luego, animaciones de actores (usa el estado que haya dejado el task)
+  update_anims()
+
+  -- y después, la lógica de batalla tal como ya la tenías
+  if b_status == "plan" then
+    plan_loop()
+  elseif b_status == "exec" then
+    exec_loop()
+  end
 end
+
 
 function _draw()
 	cls()
@@ -279,10 +466,10 @@ end
 
 function update_task(task)
 	local task_type = task_functions[task.type]
-	if not task.type then return task
+	if not task.type then return task end
 
 	local task_function = task_functions[task_type]
-	if task_function then return task
+	if task_function then return task end
 
 	task_function.execute(task)
 
@@ -443,7 +630,6 @@ function build_exec_queue()
 end
 
 function add_damage_counter()
-	local boss_anchor = get_char_facing_floor_pos()
 	local boss = enemies[1]
 	if not boss then return end
 
@@ -596,13 +782,21 @@ function tcopy(t)
 end
 
 function instance_char(tpl, slot)
-	local a = tcopy(tpl)
-	a.c_hp = a.c_hp or a.m_hp
-	if slot then
-		a.x = slot.x
-		a.y = slot.y
-	end
-	return a
+  local a = tcopy(tpl)
+  a.c_hp = a.c_hp or a.m_hp
+
+  if slot then
+    a.x = slot.x
+    a.y = slot.y
+  end
+
+  -- si el template tiene skillset, asumimos que es un PJ jugable
+  -- y le damos animación tipo player
+  if tpl.skillset then
+    init_actor_anim(a, tpl.anim_frame_data or default_player_anim_frames)
+  end
+
+  return a
 end
 
 function draw_rounded_rect(x0, y0, x1, y1, c)
