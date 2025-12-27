@@ -1,16 +1,9 @@
 pico-8 cartridge // http://www.pico-8.com
-version 42
+version 43
 __lua__
 --#globals
 
-tps = 4 -- ticks por frame de animación (copiado de ani.p8)
-
--- anims básicas, mismas que en ani.p8
-default_player_anim_frames = {
-  idle = { 1 },
-  prep_atk = { 2 },
-  attack = { 3, 4, 5 }
-}
+tps = 4 -- ticks por frame de animaciれはn (copiado de ani.p8)
 
 b_status = "plan"
 flashing_screen = false
@@ -95,7 +88,12 @@ templates = {
 		atk = 7, def = 10,
 		spd = 5, mag = 4,
 		spr = 1,
-		skillset = classes.paladin
+		skillset = classes.paladin,
+		anim_frames = {
+			idle = { 1 },
+			prep_atk = { 2 },
+			attack = { 3, 4, 5 }
+		}
 	},
 
 	wizard = {
@@ -103,10 +101,15 @@ templates = {
 		m_hp = 50, c_hp = 50,
 		atk = 2, def = 4,
 		spd = 3, mag = 9,
-		spr = 1,
+		spr = 17,
 		skillset = classes.wizard,
 		learned = {
 			fireball = "fireball"
+		},
+		anim_frames = {
+			idle = { 17 },
+			prep_atk = { 19 },
+			attack = { 18, 18, 18 }
 		}
 	},
 
@@ -116,7 +119,12 @@ templates = {
 		atk = 9, def = 6,
 		spd = 8, mag = 1,
 		spr = 1,
-		skillset = classes.druid
+		skillset = classes.druid,
+		anim_frames = {
+			idle = { 1 },
+			prep_atk = { 2 },
+			attack = { 3, 4, 5 }
+		}
 	},
 
 	boss = {
@@ -206,7 +214,7 @@ local function tick_executing()
       -- opcional: printh(err)
       del(taskmgr.executing, t)
 
-    -- si terminó normalmente
+    -- si terminれは normalmente
     elseif costatus(t.co) == "dead" then
       if t.next then
         -- permitir secuencias: t.next = {t2, t3, ...} o un solo task
@@ -297,7 +305,7 @@ function update_anims()
     end
   end
 
-  -- enemies (por ahora sólo los que tengan anim definida)
+  -- enemies (por ahora sれはlo los que tengan anim definida)
   if enemies then
     for e in all(enemies) do
       update_actor_anim(e)
@@ -371,14 +379,14 @@ function _update()
   -- animaciones de actores
   update_anims()
 
-  -- timers de daño flotante
+  -- timers de daれねo flotante
   update_damage_counters()
 
-  -- lógica de input / estados
+  -- lれはgica de input / estados
   if b_status == "plan" then
     plan_loop()
   elseif b_status == "exec" then
-    -- por ahora no hay lógica extra de exec:
+    -- por ahora no hay lれはgica extra de exec:
     -- las corutinas se ejecutan siempre via taskmgr.update()
   end
 end
@@ -421,7 +429,7 @@ end
 
 -- ===== helpers de estado - PLAN =====
 function cur_char_ix()
-	-- con opción B, el PJ actual es siempre el siguiente al último del stack
+	-- con opciれはn B, el PJ actual es siempre el siguiente al れむltimo del stack
 	return #nav_order_stack + 1
 end
 
@@ -430,7 +438,7 @@ function char_for_current()
 end
 
 function get_chain_for_partial()
-	-- devuelve la cadena de submenれむs de la orden parcial actual (o vacía)
+	-- devuelve la cadena de submenれむs de la orden parcial actual (o vacれとa)
 	if not current_order or #current_order.inputs == 0 then
 		return {}
 	end
@@ -444,7 +452,7 @@ function get_chain_for_partial()
 end
 
 function derive_pointer_from_inputs(inputs)
-	-- setea nav_table_pointer/nav_cursor_ix según el れむltimo input de "inputs"
+	-- setea nav_table_pointer/nav_cursor_ix segれむn el れむltimo input de "inputs"
 	if not inputs or #inputs == 0 then
 		nav_table_pointer = "command"
 		nav_cursor_ix = 1
@@ -506,37 +514,22 @@ end
 
 -- ===== cancelar (B) =====
 function handle_cancel()
-	if not btnp(5) then return false end
+  if not btnp(5) then return false end
 
-	-- 1) Si hay orden parcial, deshacer dentro de ella
-	if current_order and #current_order.inputs > 0 then
-		del(current_order.inputs, current_order.inputs[#current_order.inputs])
+  -- siempre descartamos lo parcial del PJ actual
+  current_order = nil
 
-		if #current_order.inputs == 0 then
-			-- ya no queda nada parcial -> volver al comando
-			current_order = nil
-			nav_table_pointer = "command"
-			nav_cursor_ix = 1
-		else
-			-- volver al paso anterior dentro de la parcial
-			derive_pointer_from_inputs(current_order.inputs)
-		end
-		return true
-	end
+  -- si hay un pj anterior ya confirmado, volvemos a ese PJ
+  if #nav_order_stack > 0 then
+    -- "cancelar todo su stack desde el comienzo":
+    -- sacamos su orden del stack (queda sin confirmar) y volvemos al menれむ command
+    del(nav_order_stack, nav_order_stack[#nav_order_stack])
+  end
 
-	-- 2) Si no hay parcial, podemos recuperars la れむltima completa del stack
-	if not current_order and #nav_order_stack > 0 then
-		current_order = nav_order_stack[#nav_order_stack]
-		del(nav_order_stack, current_order)
-		-- ahora estamos dentro de esa orden y podemos seguir deshaciendo
-		derive_pointer_from_inputs(current_order.inputs)
-		return true
-	end
-
-	-- 3) No hay nada que deshacer: asegurar UI base
-	nav_table_pointer = "command"
-	nav_cursor_ix = 1
-	return true
+  -- UI base para el PJ actual (que ahora es el anterior, o el mismo si no habれとa)
+  nav_table_pointer = "command"
+  nav_cursor_ix = 1
+  return true
 end
 
 -- ===== movimiento =====
@@ -555,10 +548,10 @@ function current_table_size()
 	if nav_table_pointer == "command" then
 		return #char.skillset
 	elseif nav_table_pointer == "skill_sel" then
-		-- TODO: tamaれねo real del menú de skills del comando elegido
+		-- TODO: tamaれねo real del menれむ de skills del comando elegido
 		return 1
 	elseif nav_table_pointer == "target" then
-		-- TODO: cantidad de objetivos válidos
+		-- TODO: cantidad de objetivos vれくlidos
 		return 1
 	end
 
@@ -609,11 +602,9 @@ function draw_back()
 end
 
 function draw_party()
-	local n = min(#pc_slots, #players)
-	for i = 1, n do
+	for i = 1, #players do
 		local ch = players[i]
-		local slot = pc_slots[i]
-		spr(ch.spr or 1, ch.x or slot.x, ch.y or slot.y)
+		spr(ch.spr, ch.x, ch.y)
 	end
 end
 
@@ -732,7 +723,7 @@ function instance_char(tpl, slot)
   end
 
   -- si el template tiene skillset, asumimos que es un PJ jugable
-  -- y le damos animación tipo player
+  -- y le damos animaciれはn tipo player
   if tpl.skillset then
     init_actor_anim(a, tpl.anim_frame_data or default_player_anim_frames)
   end
@@ -754,14 +745,14 @@ __gfx__
 00000000000721100001220000021100002911000077210000721110000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000014550000145500002455000274550000145500072145000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000110100001101000011010001109100001011000001010000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0aa00a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-a99a0a0a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-a00a0aa9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-9aa90a9a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-09900909000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000666000006660000066600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000a00000fff00000fff00000fff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0aa00a00000ffa60c00ffa600c0ffa60000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+a99a0a0a0c0044605500446002004460000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+a00a0aa9020556500445565004455650000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+9aa90a9a044555500024555002245550000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+09900909025455400005554002055540000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000020555500005555000055550000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
