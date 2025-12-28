@@ -9,6 +9,8 @@ b_status = "plan"
 flashing_screen = false
 flashing_color = 7
 
+cursor_selection = {}
+
 pc_slots = {
 	{ x = 85, y = 62 },
 	{ x = 103, y = 41 },
@@ -133,10 +135,16 @@ templates = {
 		atk = 10, def = 5,
 		spd = 5, mag = 5,
 		spr = 64,
+		is_flying = true,
 		anchors = {
 			fx = {
 				x = 8,
 				y = 8
+			},
+			cursor = {
+				x = 16,
+				y = 4,
+				flipped = true
 			}
 		}
 	}
@@ -155,174 +163,171 @@ show_flags = {}
 -- ===== TASK MANAGER (COROUTINAS) =====
 
 taskmgr = {
-  executing = {},
-  queue = {}
+	executing = {},
+	queue = {}
 }
 
 function new_task(args)
-  local t = {
-    state = "awaiting",
-    next = args.next,
-    on_start = args.on_start,
-    on_tick = args.on_tick,
-    is_finished = args.is_finished,
-    on_done = args.on_done
-  }
+	local t = {
+		state = "awaiting",
+		next = args.next,
+		on_start = args.on_start,
+		on_tick = args.on_tick,
+		is_finished = args.is_finished,
+		on_done = args.on_done
+	}
 
-  t.co = cocreate(function()
-    t.state = "executing"
-    if t.on_start then t:on_start() end
+	t.co = cocreate(function()
+		t.state = "executing"
+		if t.on_start then t:on_start() end
 
-    -- si no hay on_tick, el task termina enseguida
-    local finished = false or not t.on_tick
+		-- si no hay on_tick, el task termina enseguida
+		local finished = false or not t.on_tick
 
-    while not finished do
-      t:on_tick()
+		while not finished do
+			t:on_tick()
 
-      if t.is_finished then
-        finished = t:is_finished()
-      else
-        finished = true
-      end
+			if t.is_finished then
+				finished = t:is_finished()
+			else
+				finished = true
+			end
 
-      yield()
-    end
+			yield()
+		end
 
-    if t.on_done then t:on_done() end
-  end)
+		if t.on_done then t:on_done() end
+	end)
 
-  return t
+	return t
 end
 
 function taskmgr.add(t)
-  add(taskmgr.queue, t)
+	add(taskmgr.queue, t)
 end
 
 local function start_queued()
-  for t in all(taskmgr.queue) do
-    add(taskmgr.executing, t)
-    del(taskmgr.queue, t)
-  end
+	for t in all(taskmgr.queue) do
+		add(taskmgr.executing, t)
+		del(taskmgr.queue, t)
+	end
 end
 
 local function tick_executing()
-  for t in all(taskmgr.executing) do
-    local ok, err = coresume(t.co)
+	for t in all(taskmgr.executing) do
+		local ok, err = coresume(t.co)
 
-    -- si explota la corutina, la sacamos
-    if not ok then
-      -- opcional: printh(err)
-      del(taskmgr.executing, t)
+		-- si explota la corutina, la sacamos
+		if not ok then
+			-- opcional: printh(err)
+			del(taskmgr.executing, t)
 
-    -- si terminれは normalmente
-    elseif costatus(t.co) == "dead" then
-      if t.next then
-        -- permitir secuencias: t.next = {t2, t3, ...} o un solo task
-        if type(t.next) == "table" and t.next[1] then
-          for nt in all(t.next) do
-            taskmgr.add(nt)
-          end
-        else
-          taskmgr.add(t.next)
-        end
-      end
+			-- si terminれは normalmente
+		elseif costatus(t.co) == "dead" then
+			if t.next then
+				-- permitir secuencias: t.next = {t2, t3, ...} o un solo task
+				if type(t.next) == "table" and t.next[1] then
+					for nt in all(t.next) do
+						taskmgr.add(nt)
+					end
+				else
+					taskmgr.add(t.next)
+				end
+			end
 
-      del(taskmgr.executing, t)
-    end
-  end
+			del(taskmgr.executing, t)
+		end
+	end
 end
 
 function taskmgr.update()
-  start_queued()
-  tick_executing()
+	start_queued()
+	tick_executing()
 end
 
 function await(secs)
-  -- en ani.p8 estaba hardcodeado a 30 fps
-  -- lo dejo igual por ahora para que el comportamiento sea el mismo
-  local frames = max(0, flr((secs or 0) * 30 + 0.5))
-  for i=1, frames do
-    yield()
-  end
+	-- en ani.p8 estaba hardcodeado a 30 fps
+	-- lo dejo igual por ahora para que el comportamiento sea el mismo
+	local frames = max(0, flr((secs or 0) * 30 + 0.5))
+	for i = 1, frames do
+		yield()
+	end
 end
 
 function lerp_char_pos(c, tx, ty, seconds)
-  local sx, sy = c.x, c.y
-  local frames = max(1, flr(seconds * stat(7) + 0.5))
+	local sx, sy = c.x, c.y
+	local frames = max(1, flr(seconds * stat(7) + 0.5))
 
-  for i=1,frames do
-    local t = i / frames
-    c.x = sx + (tx - sx) * t
-    c.y = sy + (ty - sy) * t
-    yield()
-  end
+	for i = 1, frames do
+		local t = i / frames
+		c.x = sx + (tx - sx) * t
+		c.y = sy + (ty - sy) * t
+		yield()
+	end
 
-  c.x, c.y = tx, ty
+	c.x, c.y = tx, ty
 end
 
 function init_actor_anim(a, anim_frames)
-  a.anim = {
-    id = "idle",
-    frame = 1,
-    ticker = 0,
-    -- en ani.p8, si looping es nil, no loopea; lo respetamos
-    looping = true
-  }
-  a.is_flashing = 0
-  a.anim_frame_data = anim_frames or default_player_anim_frames
+	a.anim = {
+		id = "idle",
+		frame = 1,
+		ticker = 0,
+		-- en ani.p8, si looping es nil, no loopea; lo respetamos
+		looping = true
+	}
+	a.is_flashing = 0
+	a.anim_frame_data = anim_frames
 end
 
 function update_actor_anim(a)
-  if not a or not a.anim or not a.anim_frame_data then
-    return
-  end
+	if not a or not a.anim or not a.anim_frame_data then
+		return
+	end
 
-  a.anim.ticker += 1
+	a.anim.ticker += 1
 
-  if a.anim.ticker >= tps then
-    a.anim.ticker = 0
-    local cur = a.anim_frame_data[a.anim.id]
-    if not cur then return end
+	if a.anim.ticker >= tps then
+		a.anim.ticker = 0
+		local cur = a.anim_frame_data[a.anim.id]
+		if not cur then return end
 
-    a.anim.frame += 1
-    if a.anim.frame > #cur then
-      if a.anim.looping then
-        a.anim.frame = 1
-      else
-        a.anim.frame = #cur
-      end
-    end
+		a.anim.frame += 1
+		if a.anim.frame > #cur then
+			if a.anim.looping then
+				a.anim.frame = 1
+			else
+				a.anim.frame = #cur
+			end
+		end
 
-    a.spr = cur[a.anim.frame]
-  end
+		a.spr = cur[a.anim.frame]
+	end
 end
 
 function update_anims()
-  -- players
-  if players then
-    for p in all(players) do
-      update_actor_anim(p)
-    end
-  end
+	-- players
+	for p in all(players) do
+		update_actor_anim(p)
+	end
 
-  -- enemies (por ahora sれはlo los que tengan anim definida)
-  if enemies then
-    for e in all(enemies) do
-      update_actor_anim(e)
-    end
-  end
+	-- enemies
+	for e in all(enemies) do
+		update_actor_anim(e)
+		update_floating(e)
+	end
 end
 
 function start_actor_anim(a, anim_id, looping)
-  if not a or not a.anim then return end
+	if not a or not a.anim then return end
 
-  a.anim.id = anim_id
-  a.anim.frame = 1
-  a.anim.ticker = 0
+	a.anim.id = anim_id
+	a.anim.frame = 1
+	a.anim.ticker = 0
 
-  if looping ~= nil then
-    a.anim.looping = looping
-  end
+	if looping ~= nil then
+		a.anim.looping = looping
+	end
 end
 
 --#pub-func
@@ -359,11 +364,13 @@ function _init()
 			ui_command = draw_command_texts,
 			ui_stats = draw_stats
 		},
-		target = { 
+		target = {
+			--no command sino nombre del actor?
 			ui_command = draw_command_texts,
-			ui_stats = draw_stats
+			ui_stats = draw_stats,
+			ui_cursor = draw_pointer_cursors
 		},
-		skill_sel = { 
+		skill_sel = {
 			ui_skill_sel = draw_skill_sel
 		}
 	}
@@ -373,32 +380,32 @@ function _init()
 end
 
 function _update()
-  -- corutinas generales (timelines, tweens, etc.)
-  taskmgr.update()
+	-- corutinas generales (timelines, tweens, etc.)
+	taskmgr.update()
 
-  -- animaciones de actores
-  update_anims()
+	-- animaciones de actores
+	update_anims()
 
-  -- timers de daれねo flotante
-  update_damage_counters()
+	-- timers de daれねo flotante
+	update_damage_counters()
 
-  -- lれはgica de input / estados
-  if b_status == "plan" then
-    plan_loop()
-  elseif b_status == "exec" then
-    -- por ahora no hay lれはgica extra de exec:
-    -- las corutinas se ejecutan siempre via taskmgr.update()
-  end
+	-- lれはgica de input / estados
+	if b_status == "plan" then
+		plan_loop()
+	elseif b_status == "exec" then
+		-- por ahora no hay lれはgica extra de exec:
+		-- las corutinas se ejecutan siempre via taskmgr.update()
+	end
 end
 
 function _draw()
 	cls()
 	draw_back()
-	spr(enemies[1].spr, enemies[1].x, enemies[1].y, 2, 2)
+	draw_enemies()
 	draw_party()
 	draw_ui()
 	-- debug:
-	print("cursor:"..tostr(nav_cursor_ix), 90, 3, 7)
+	print("cursor:" .. tostr(nav_cursor_ix), 90, 3, 7)
 end
 
 function plan_loop()
@@ -407,14 +414,16 @@ function plan_loop()
 			handle_movement()
 		end
 	end
+
+	update_plan_cursors()
 end
 
 function update_damage_counters()
 	for i = #dmg_counters, 1, -1 do
-        local elem = dmg_counters[i]
+		local elem = dmg_counters[i]
 		if elem then
 			elem.timer -= 1
-			
+
 			if elem.timer <= 0 then
 				deli(dmg_counters, i)
 			else
@@ -424,7 +433,30 @@ function update_damage_counters()
 				elem.y += elem.vy
 			end
 		end
-    end
+	end
+end
+
+function update_plan_cursors()
+	cursor_selection = {}
+
+	if nav_table_pointer ~= "target" then return end
+
+	local n = #npc_slots
+	if n == 0 then return end
+
+	nav_cursor_ix = mid(1, nav_cursor_ix, n)
+
+	local anchor = get_target_anchor(nav_cursor_ix)
+	if not anchor then return end
+
+	add(cursor_selection, anchor)
+end
+
+function update_floating(a)
+	if not a.is_flying then return end
+
+	a.float_t += a.float_speed
+	a.y = a.base_y + sin(a.float_t) * a.float_amp
 end
 
 -- ===== helpers de estado - PLAN =====
@@ -514,22 +546,22 @@ end
 
 -- ===== cancelar (B) =====
 function handle_cancel()
-  if not btnp(5) then return false end
+	if not btnp(5) then return false end
 
-  -- siempre descartamos lo parcial del PJ actual
-  current_order = nil
+	-- siempre descartamos lo parcial del PJ actual
+	current_order = nil
 
-  -- si hay un pj anterior ya confirmado, volvemos a ese PJ
-  if #nav_order_stack > 0 then
-    -- "cancelar todo su stack desde el comienzo":
-    -- sacamos su orden del stack (queda sin confirmar) y volvemos al menれむ command
-    del(nav_order_stack, nav_order_stack[#nav_order_stack])
-  end
+	-- si hay un pj anterior ya confirmado, volvemos a ese PJ
+	if #nav_order_stack > 0 then
+		-- "cancelar todo su stack desde el comienzo":
+		-- sacamos su orden del stack (queda sin confirmar) y volvemos al menれむ command
+		del(nav_order_stack, nav_order_stack[#nav_order_stack])
+	end
 
-  -- UI base para el PJ actual (que ahora es el anterior, o el mismo si no habれとa)
-  nav_table_pointer = "command"
-  nav_cursor_ix = 1
-  return true
+	-- UI base para el PJ actual (que ahora es el anterior, o el mismo si no habれとa)
+	nav_table_pointer = "command"
+	nav_cursor_ix = 1
+	return true
 end
 
 -- ===== movimiento =====
@@ -551,8 +583,7 @@ function current_table_size()
 		-- TODO: tamaれねo real del menれむ de skills del comando elegido
 		return 1
 	elseif nav_table_pointer == "target" then
-		-- TODO: cantidad de objetivos vれくlidos
-		return 1
+		return get_target_count()
 	end
 
 	return 1
@@ -572,20 +603,22 @@ function add_damage_counter()
 		local final_x = boss_anchor.x + boss.x - (2 * 3 + 1) / 2
 		local final_y = boss_anchor.y + boss.y - 10
 
-		add(dmg_counters, {
-			text = "58",
-			x = final_x,
-			y = final_y,
-			color_fg = 7,
-			color_bg = 1,
-			color_fg_fade = 6,
-			color_bg_fade = 0,
-			vx = 0,
-			vy = -2.5,
-			timer = seconds(0.8),
-			ax = 0.025,
-			ay = 0.25
-		})
+		add(
+			dmg_counters, {
+				text = "58",
+				x = final_x,
+				y = final_y,
+				color_fg = 7,
+				color_bg = 1,
+				color_fg_fade = 6,
+				color_bg_fade = 0,
+				vx = 0,
+				vy = -2.5,
+				timer = seconds(0.8),
+				ax = 0.025,
+				ay = 0.25
+			}
+		)
 	end
 end
 
@@ -597,8 +630,20 @@ end
 
 -- ===== dibujo =====
 function draw_back()
-	rectfill(0, 0, 127, 35, 12)
-	rectfill(0, 36, 127, 127, 3)
+	rectfill(0, 0, 127, 35, 4)
+	rectfill(0, 36, 127, 127, 0)
+end
+
+function draw_enemies()
+	local enemy = enemies[1]
+	if not enemy then return end
+
+	if enemy.is_flying then
+		spr(96, enemy.x, enemy.base_y + 14)
+		spr(96, enemy.x + 6, enemy.base_y + 14, 1, 1, true)
+	end
+
+	spr(enemy.spr, enemy.x, enemy.y, 2, 2)
 end
 
 function draw_party()
@@ -614,12 +659,21 @@ function draw_planning_ui()
 	draw_rounded_rect(0, 95, 127, 127, 1)
 	local flags = show_flags[nav_table_pointer]
 	if flags then
-		for _, fn in pairs(flags) do fn() end
+		for _, fn in pairs(flags) do
+			fn()
+		end
 	end
 end
 
 function draw_execution_ui()
 	draw_damage_counters()
+end
+
+function draw_pointer_cursors()
+	for a in all(cursor_selection) do
+		if not a then return end
+		spr(128, a.x, a.y, 1, 1, a.flipped or false)
+	end
 end
 
 function draw_damage_counters()
@@ -667,11 +721,11 @@ function draw_stats()
 		if #hp_str == 1 then hp_str = " " .. hp_str end
 
 		local done_count = #nav_order_stack
-		
+
 		if i == cur_char_ix() then
 			print(ch.name, stats_x0 + 12, cy, 2)
 			print(ch.name, stats_x0 + 12, cy - 1, 7)
-		else 
+		else
 			print(ch.name, stats_x0 + 12, cy, 6)
 		end
 
@@ -688,6 +742,36 @@ function draw_skill_sel()
 end
 
 -- ===== helpers varios =====
+function clamp(v, a, b)
+	return max(a, min(b, v))
+end
+
+function get_target_count()
+	-- por ahora: usamos npc_slots como lista de navegacion
+	return #npc_slots
+end
+
+function get_target_enemy(ix)
+	-- por ahora 1 slot == 1 enemigo (tu boss)
+	return enemies[ix]
+end
+
+function get_target_anchor(ix)
+	local e = enemies[ix]
+	local slot = npc_slots[ix]
+	if not slot then return nil end
+
+	if e and e.anchors and e.anchors.cursor then
+		return {
+			x = slot.x + e.anchors.cursor.x,
+			y = slot.y + e.anchors.cursor.y,
+			flipped = e.anchors.cursor.flipped
+		}
+	end
+
+	return { x = slot.x, y = slot.y }
+end
+
 function get_char_fx_pos(char)
 	if char then
 		local char_ax = char.anchors.fx.x
@@ -714,21 +798,28 @@ function tcopy(t)
 end
 
 function instance_char(tpl, slot)
-  local a = tcopy(tpl)
-  a.c_hp = a.c_hp or a.m_hp
+	local a = tcopy(tpl)
+	a.c_hp = a.c_hp or a.m_hp
 
-  if slot then
-    a.x = slot.x
-    a.y = slot.y
-  end
+	if slot then
+		a.x = slot.x
+		a.y = slot.y
+	end
 
-  -- si el template tiene skillset, asumimos que es un PJ jugable
-  -- y le damos animaciれはn tipo player
-  if tpl.skillset then
-    init_actor_anim(a, tpl.anim_frame_data or default_player_anim_frames)
-  end
+	if tpl.is_flying then
+		a.base_y = a.y
+		a.float_t = 0
+		a.float_amp = 2
+		a.float_speed = 0.02
+	end
 
-  return a
+	-- si el template tiene skillset, asumimos que es un PJ jugable
+	-- y le damos animaciれはn tipo player
+	if tpl.skillset then
+		init_actor_anim(a, tpl.anim_frames)
+	end
+
+	return a
 end
 
 function draw_rounded_rect(x0, y0, x1, y1, c)
@@ -737,14 +828,14 @@ function draw_rounded_rect(x0, y0, x1, y1, c)
 end
 
 __gfx__
-00000000000011100000000000000000000000000000000000011100000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000ff100000111000001110000011100000011100000fff0000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000fff0000ff100000ff100000ff1000000ff1000000fff0000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000088800000000000000000000000000000000000088800000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000ff800000888000008880000088800000088800000fff0000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000fff0000ff800000ff800000ff8000000ff8000000fff0000000000000000000000000000000000000000000000000000000000000000000000000
 000000000700440000fff00000fff00000fff000000fff0000004400000000000000000000000000000000000000000000000000000000000000000000000000
-00000000007211100004410000044000000440007700440007011110000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000721100001220000021100002911000077210000721110000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000014550000145500002455000274550000145500072145000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000110100001101000011010001109100001011000001010000000000000000000000000000000000000000000000000000000000000000000000000
+000000000072a8800004480000044000000440007700440007088a80000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000728800008220000028800002988000077280000728880000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000084550000845500002455000274550000845500072845000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000880800008808000088080008809800008088000008080000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000666000006660000066600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000a00000fff00000fff00000fff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0aa00a00000ffa60c00ffa600c0ffa60000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -770,13 +861,13 @@ a00a0aa9020556500445565004455650000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00888888880000000000b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0888888888800000000bb00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-888888888888000000b3300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-88888888888880000bb33b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-88888888888880000333bb0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-888dddd888ddd0000333330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-888d11188811d0000333330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0888d118881d80000333330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0888888888800000000bb0000880000000bb30000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+888888888888000000b33000099000000bbb00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+88888888888880000bb33b0008820000000340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+88888888888880000333bb00009920000044440b0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+888dddd888ddd0000333330070494070722244b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+888d11188811d0000333330077494770000322200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0888d118881d8000033333000090090000b00b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00888888888880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00008881118880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000888188800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -787,11 +878,11 @@ a00a0aa9020556500445565004455650000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00001111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00001111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
