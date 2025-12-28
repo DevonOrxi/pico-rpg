@@ -70,6 +70,8 @@ fx = {
 	staff_atk = { 194, 195, 196, 197 }
 }
 
+battle_fx = {}
+
 --actor-groups
 players = {}
 enemies = {}
@@ -87,7 +89,8 @@ templates = {
 			idle = { 1 },
 			prep_atk = { 2 },
 			attack = { 2, 3, 5 }
-		}
+		},
+		attack_fx = fx.sword_atk
 	},
 
 	wizard = {
@@ -104,7 +107,8 @@ templates = {
 			idle = { 17 },
 			prep_atk = { 19 },
 			attack = { 18 }
-		}
+		},
+		attack_fx = fx.staff_atk
 	},
 
 	druid = {
@@ -194,24 +198,28 @@ function new_task(args)
 end
 
 function task_attack(attacker, target)
-  return new_task {
-    on_start = function(self)
-      await(0.15)
+	return new_task {
+		on_start = function(self)
+			await(0.15)
 
-      start_actor_anim(attacker, "prep_atk")
-      await(0.25)
+			local ox, oy = attacker.x, attacker.y
+			lerp_char_pos(attacker, ox - 12, oy, 0.12)
+			await(0.15)
 
-      start_actor_anim(attacker, "attack", false)
+			start_actor_anim(attacker, "attack", false)
 
-	  --add_fx()
-      await(0.40)
+			await(0.15)
+			add_fx(attacker.attack_fx, target)
+			await(0.25)
 
-      add_damage_counter(target)
+			add_damage_counter(target, "58")
 
-      start_actor_anim(attacker, "idle")
-      await(0.30)
-    end
-  }
+			await(0.15)
+			start_actor_anim(attacker, "idle")
+			lerp_char_pos(attacker, ox, oy, 0.12)
+			await(0.30)
+		end
+	}
 end
 
 function taskmgr.add(t)
@@ -358,8 +366,7 @@ function _init()
 		},
 		{
 			inputs = {
-				{ type = "command", input = 2 },
-				{ type = "skill_sel", input = 1 },
+				{ type = "command", input = 1 },
 				{ type = "target", input = 1 }
 			}
 		}
@@ -585,7 +592,7 @@ function current_table_size()
 	if nav_table_pointer == "command" then
 		return #char.skillset
 	elseif nav_table_pointer == "skill_sel" then
-		-- TODO: tamanyo real del meni de skills del comando elegido
+		-- TODO: tamanyo real del menu de skills del comando elegido
 		return 1
 	elseif nav_table_pointer == "target" then
 		return get_target_count()
@@ -595,7 +602,23 @@ function current_table_size()
 end
 
 -- ===== execution =====
-function add_damage_counter(target)
+function add_fx(f, target)
+	local anchor = get_char_fx_pos(target)
+	if anchor then
+		local final_x = anchor.x + target.x - 4
+		local final_y = anchor.y + target.y - 4
+
+		add(
+			battle_fx, {
+				x = final_x,
+				y = final_y,
+				frames = f
+			}
+		)
+	end
+end
+
+function add_damage_counter(target, dmg_txt)
 	local anchor = get_char_fx_pos(target)
 	if anchor then
 		local final_x = anchor.x + target.x - (2 * 3 + 1) / 2
@@ -603,7 +626,7 @@ function add_damage_counter(target)
 
 		add(
 			dmg_counters, {
-				text = "58",
+				text = dmg_txt or "99",
 				x = final_x,
 				y = final_y,
 				color_fg = 7,
