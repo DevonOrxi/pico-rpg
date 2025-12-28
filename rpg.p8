@@ -3,7 +3,7 @@ version 43
 __lua__
 --#globals
 
-tps = 4 -- ticks por frame de animaciれはn (copiado de ani.p8)
+tps = 4 -- ticks por frame de animacion
 
 b_status = "plan"
 flashing_screen = false
@@ -35,19 +35,6 @@ command = {
 		name = "attack",
 		tables = {
 			"target"
-		},
-		exec = {
-			now = {
-				tasks = {
-					--wait
-					--animate dramatic pose
-					--flash screen + sound + move player
-					--wait
-					--screen shake + slash + damage counter
-					--wait
-				},
-				finished = "false"
-			}
 		}
 	},
 	skill = {
@@ -78,6 +65,11 @@ classes = {
 	druid = { command.attack, command.skill, command.defend }
 }
 
+fx = {
+	sword_atk = { 192, 193, 193, 193, 192 },
+	staff_atk = { 194, 195, 196, 197 }
+}
+
 --actor-groups
 players = {}
 enemies = {}
@@ -94,7 +86,7 @@ templates = {
 		anim_frames = {
 			idle = { 1 },
 			prep_atk = { 2 },
-			attack = { 3, 4, 5 }
+			attack = { 2, 3, 5 }
 		}
 	},
 
@@ -111,7 +103,7 @@ templates = {
 		anim_frames = {
 			idle = { 17 },
 			prep_atk = { 19 },
-			attack = { 18, 18, 18 }
+			attack = { 18 }
 		}
 	},
 
@@ -161,7 +153,6 @@ current_order = nil
 show_flags = {}
 
 -- ===== TASK MANAGER (COROUTINAS) =====
-
 taskmgr = {
 	executing = {},
 	queue = {}
@@ -202,6 +193,27 @@ function new_task(args)
 	return t
 end
 
+function task_attack(attacker, target)
+  return new_task {
+    on_start = function(self)
+      await(0.15)
+
+      start_actor_anim(attacker, "prep_atk")
+      await(0.25)
+
+      start_actor_anim(attacker, "attack", false)
+
+	  --add_fx()
+      await(0.40)
+
+      add_damage_counter(target)
+
+      start_actor_anim(attacker, "idle")
+      await(0.30)
+    end
+  }
+end
+
 function taskmgr.add(t)
 	add(taskmgr.queue, t)
 end
@@ -219,10 +231,7 @@ local function tick_executing()
 
 		-- si explota la corutina, la sacamos
 		if not ok then
-			-- opcional: printh(err)
 			del(taskmgr.executing, t)
-
-			-- si terminれは normalmente
 		elseif costatus(t.co) == "dead" then
 			if t.next then
 				-- permitir secuencias: t.next = {t2, t3, ...} o un solo task
@@ -246,8 +255,6 @@ function taskmgr.update()
 end
 
 function await(secs)
-	-- en ani.p8 estaba hardcodeado a 30 fps
-	-- lo dejo igual por ahora para que el comportamiento sea el mismo
 	local frames = max(0, flr((secs or 0) * 30 + 0.5))
 	for i = 1, frames do
 		yield()
@@ -273,7 +280,6 @@ function init_actor_anim(a, anim_frames)
 		id = "idle",
 		frame = 1,
 		ticker = 0,
-		-- en ani.p8, si looping es nil, no loopea; lo respetamos
 		looping = true
 	}
 	a.is_flashing = 0
@@ -386,14 +392,14 @@ function _update()
 	-- animaciones de actores
 	update_anims()
 
-	-- timers de daれねo flotante
+	-- timers de danyo flotante
 	update_damage_counters()
 
-	-- lれはgica de input / estados
+	-- logica de input / estados
 	if b_status == "plan" then
 		plan_loop()
 	elseif b_status == "exec" then
-		-- por ahora no hay lれはgica extra de exec:
+		-- por ahora no hay logica extra de exec:
 		-- las corutinas se ejecutan siempre via taskmgr.update()
 	end
 end
@@ -461,7 +467,6 @@ end
 
 -- ===== helpers de estado - PLAN =====
 function cur_char_ix()
-	-- con opciれはn B, el PJ actual es siempre el siguiente al れむltimo del stack
 	return #nav_order_stack + 1
 end
 
@@ -470,7 +475,7 @@ function char_for_current()
 end
 
 function get_chain_for_partial()
-	-- devuelve la cadena de submenれむs de la orden parcial actual (o vacれとa)
+	-- devuelve la cadena de submenus de la orden parcial actual (o vacia)
 	if not current_order or #current_order.inputs == 0 then
 		return {}
 	end
@@ -484,7 +489,7 @@ function get_chain_for_partial()
 end
 
 function derive_pointer_from_inputs(inputs)
-	-- setea nav_table_pointer/nav_cursor_ix segれむn el れむltimo input de "inputs"
+	-- setea nav_table_pointer/nav_cursor_ix segun el れむltimo input de "inputs"
 	if not inputs or #inputs == 0 then
 		nav_table_pointer = "command"
 		nav_cursor_ix = 1
@@ -580,7 +585,7 @@ function current_table_size()
 	if nav_table_pointer == "command" then
 		return #char.skillset
 	elseif nav_table_pointer == "skill_sel" then
-		-- TODO: tamaれねo real del menれむ de skills del comando elegido
+		-- TODO: tamanyo real del meni de skills del comando elegido
 		return 1
 	elseif nav_table_pointer == "target" then
 		return get_target_count()
@@ -590,18 +595,11 @@ function current_table_size()
 end
 
 -- ===== execution =====
-function build_exec_queue()
-	add_damage_counter()
-end
-
-function add_damage_counter()
-	local boss = enemies[1]
-	if not boss then return end
-
-	local boss_anchor = get_char_fx_pos(boss)
-	if boss_anchor then
-		local final_x = boss_anchor.x + boss.x - (2 * 3 + 1) / 2
-		local final_y = boss_anchor.y + boss.y - 10
+function add_damage_counter(target)
+	local anchor = get_char_fx_pos(target)
+	if anchor then
+		local final_x = anchor.x + target.x - (2 * 3 + 1) / 2
+		local final_y = anchor.y + target.y - 10
 
 		add(
 			dmg_counters, {
@@ -623,9 +621,53 @@ function add_damage_counter()
 end
 
 function start_exec_phase()
-	exec_queue = build_exec_queue()
-	exec_state = { ix = 1, phase = "start", t = 0 }
-	b_status = "exec"
+  b_status = "exec"
+  cursor_selection = {} -- ocultar cursores de target durante exec
+
+  -- crear tasks en cadena
+  local first = nil
+  local prev = nil
+
+  for i=1, #players do
+    local order = nav_order_stack[i]
+    local p = players[i]
+
+    -- si por algún motivo falta orden, salteamos
+    if order and p then
+      local cmd_ix = order_get_cmd_ix(order)
+      local cmd = p.skillset[cmd_ix]
+
+      if cmd and cmd.name == "attack" then
+        local target_ix = order_get_target_ix(order)
+        local target = enemies[target_ix]
+
+        local t = task_attack(p, target)
+
+        if not first then first = t end
+        if prev then prev.next = t end
+        prev = t
+      end
+    end
+  end
+
+  -- al final: volver a plan y limpiar stack
+  local done = new_task{
+    on_start = function()
+      nav_order_stack = {}
+      current_order = nil
+      nav_table_pointer = "command"
+      nav_cursor_ix = 1
+      b_status = "plan"
+    end
+  }
+
+  if prev then
+    prev.next = done
+  else
+    first = done
+  end
+
+  taskmgr.add(first)
 end
 
 -- ===== dibujo =====
@@ -666,12 +708,11 @@ function draw_planning_ui()
 end
 
 function draw_execution_ui()
-	draw_damage_counters()
+	
 end
 
 function draw_pointer_cursors()
 	for a in all(cursor_selection) do
-		if not a then return end
 		spr(128, a.x, a.y, 1, 1, a.flipped or false)
 	end
 end
@@ -691,12 +732,16 @@ function draw_damage_counters()
 end
 
 function draw_ui()
-	if b_status == "plan" then
-		draw_planning_ui()
-	elseif b_status == "exec" then
-		draw_execution_ui()
-	end
+  -- siempre, sin importar fase
+  draw_damage_counters()
+
+  if b_status == "plan" then
+    draw_planning_ui()
+  elseif b_status == "exec" then
+    draw_execution_ui()
+  end
 end
+
 
 function draw_command_texts()
 	local ix = cur_char_ix()
@@ -742,6 +787,19 @@ function draw_skill_sel()
 end
 
 -- ===== helpers varios =====
+function order_get_cmd_ix(order)
+  return order.inputs[1] and order.inputs[1].input
+end
+
+function order_get_target_ix(order)
+  for step in all(order.inputs) do
+    if step.type == "target" then
+      return step.input
+    end
+  end
+  return 1
+end
+
 function clamp(v, a, b)
 	return max(a, min(b, v))
 end
@@ -814,7 +872,7 @@ function instance_char(tpl, slot)
 	end
 
 	-- si el template tiene skillset, asumimos que es un PJ jugable
-	-- y le damos animaciれはn tipo player
+	-- y le damos animacion tipo player
 	if tpl.skillset then
 		init_actor_anim(a, tpl.anim_frames)
 	end
