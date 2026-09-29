@@ -1,20 +1,18 @@
 pico-8 cartridge // http://www.pico-8.com
 version 43
 __lua__
---#globals
+--data
+-- config, layout y contenido (comandos, clases, templates)
 
-tps = 4 -- ticks por frame de animacion
-
-b_status = "plan"
-flashing_screen = false
-flashing_color = 7
-
-cursor_selection = {}
-
+-- ===== layout =====
 pc_slots = {
 	{ x = 85, y = 62 },
 	{ x = 103, y = 41 },
 	{ x = 111, y = 79 }
+}
+
+npc_slots = {
+	{ x = 15, y = 52 }
 }
 
 cmd_txt_coords = {
@@ -23,13 +21,7 @@ cmd_txt_coords = {
 	{ x = 10, y = 118 }
 }
 
-npc_slots = {
-	{ x = 15, y = 52 }
-}
-
-max_slots = 3
-
---classes
+-- ===== comandos y clases =====
 command = {
 	attack = {
 		name = "attack",
@@ -48,16 +40,8 @@ command = {
 		tables = {
 			"target_self"
 		}
-	},
-	dummy = {
-		name = "dummy",
-		tables = {
-			"target_self"
-		}
 	}
 }
-
-skill_aux = {}
 
 classes = {
 	fencer = { command.attack, command.skill, command.defend },
@@ -65,16 +49,7 @@ classes = {
 	kiln = { command.attack, command.skill, command.defend }
 }
 
-fx = {
-	sword_atk = { 192, 193, 193, 193, 192 },
-	staff_atk = { 194, 195, 196, 197 }
-}
-
---actor-groups
-players = {}
-enemies = {}
-
---actor-templates
+-- ===== actor templates =====
 templates = {
 	fencer = {
 		name = "fencer",
@@ -142,204 +117,13 @@ templates = {
 	}
 }
 
---ui-animation
-dmg_counters = {}
+-->8
+--main
+-- _init / _update / _draw
 
---navigation
-nav_order_stack = {}
-nav_table_pointer = ""
-nav_cursor_ix = 1
-current_order = nil
-show_flags = {}
+-- fase actual del combate: "plan" | "exec"
+b_status = "plan"
 
--- ===== TASK MANAGER (COROUTINAS) =====
-taskmgr = {
-	executing = {},
-	queue = {}
-}
-
-function new_task(args)
-	local t = {
-		state = "awaiting",
-		next = args.next,
-		on_start = args.on_start,
-		on_tick = args.on_tick,
-		is_finished = args.is_finished,
-		on_done = args.on_done
-	}
-
-	t.co = cocreate(function()
-		t.state = "executing"
-		if t.on_start then t:on_start() end
-
-		-- si no hay on_tick, el task termina enseguida
-		local finished = false or not t.on_tick
-
-		while not finished do
-			t:on_tick()
-
-			if t.is_finished then
-				finished = t:is_finished()
-			else
-				finished = true
-			end
-
-			yield()
-		end
-
-		if t.on_done then t:on_done() end
-	end)
-
-	return t
-end
-
-function task_attack(attacker, target)
-	return new_task {
-		on_start = function(self)
-		await(0.15)
-
-		local ox, oy = attacker.x, attacker.y
-		lerp_char_pos(attacker, ox - 12, oy, 0.12)
-		await(0.25)
-
-		start_actor_anim(attacker, "attack", false)
-
-		--add_fx()
-		await(0.40)
-
-		add_damage_counter(target)
-
-		await(0.15)
-		start_actor_anim(attacker, "idle")
-		lerp_char_pos(attacker, ox, oy, 0.12)
-		await(0.30)
-		end
-	}
-end
-
-function taskmgr.add(t)
-	add(taskmgr.queue, t)
-end
-
-local function start_queued()
-	for t in all(taskmgr.queue) do
-		add(taskmgr.executing, t)
-		del(taskmgr.queue, t)
-	end
-end
-
-local function tick_executing()
-	for t in all(taskmgr.executing) do
-		local ok, err = coresume(t.co)
-
-		-- si explota la corutina, la sacamos
-		if not ok then
-			del(taskmgr.executing, t)
-		elseif costatus(t.co) == "dead" then
-			if t.next then
-				-- permitir secuencias: t.next = {t2, t3, ...} o un solo task
-				if type(t.next) == "table" and t.next[1] then
-					for nt in all(t.next) do
-						taskmgr.add(nt)
-					end
-				else
-					taskmgr.add(t.next)
-				end
-			end
-
-			del(taskmgr.executing, t)
-		end
-	end
-end
-
-function taskmgr.update()
-	start_queued()
-	tick_executing()
-end
-
-function await(secs)
-	local frames = max(0, flr((secs or 0) * 30 + 0.5))
-	for i = 1, frames do
-		yield()
-	end
-end
-
-function lerp_char_pos(c, tx, ty, seconds)
-	local sx, sy = c.x, c.y
-	local frames = max(1, flr(seconds * stat(7) + 0.5))
-
-	for i = 1, frames do
-		local t = i / frames
-		c.x = sx + (tx - sx) * t
-		c.y = sy + (ty - sy) * t
-		yield()
-	end
-
-	c.x, c.y = tx, ty
-end
-
-function init_actor_anim(a, anim_frames)
-	a.anim = {
-		id = "idle",
-		frame = 1,
-		ticker = 0,
-		looping = true
-	}
-	a.is_flashing = 0
-	a.anim_frame_data = anim_frames
-end
-
-function update_actor_anim(a)
-	if not a or not a.anim or not a.anim_frame_data then
-		return
-	end
-
-	a.anim.ticker += 1
-
-	if a.anim.ticker >= tps then
-		a.anim.ticker = 0
-		local cur = a.anim_frame_data[a.anim.id]
-		if not cur then return end
-
-		a.anim.frame += 1
-		if a.anim.frame > #cur then
-			if a.anim.looping then
-				a.anim.frame = 1
-			else
-				a.anim.frame = #cur
-			end
-		end
-
-		a.spr = cur[a.anim.frame]
-	end
-end
-
-function update_anims()
-	-- players
-	for p in all(players) do
-		update_actor_anim(p)
-	end
-
-	-- enemies
-	for e in all(enemies) do
-		update_actor_anim(e)
-		update_floating(e)
-	end
-end
-
-function start_actor_anim(a, anim_id, looping)
-	if not a or not a.anim then return end
-
-	a.anim.id = anim_id
-	a.anim.frame = 1
-	a.anim.ticker = 0
-
-	if looping ~= nil then
-		a.anim.looping = looping
-	end
-end
-
---#pub-func
 function _init()
 	players = {
 		instance_char(templates.fencer, pc_slots[1]),
@@ -400,7 +184,7 @@ function _update()
 
 	-- logica de input / estados
 	if b_status == "plan" then
-		plan_loop()
+		plan_update()
 	elseif b_status == "exec" then
 		-- por ahora no hay logica extra de exec:
 		-- las corutinas se ejecutan siempre via taskmgr.update()
@@ -417,48 +201,192 @@ function _draw()
 	print("cursor:" .. tostr(nav_cursor_ix), 90, 3, 7)
 end
 
-function plan_loop()
-	if not handle_accept() then
-		if not handle_cancel() then
-			handle_movement()
-		end
-	end
+-->8
+--tasks
+-- task manager (corutinas), waits y tweens
 
-	update_plan_cursors()
+taskmgr = {
+	executing = {},
+	queue = {}
+}
+
+function new_task(args)
+	local t = {
+		state = "awaiting",
+		next = args.next,
+		on_start = args.on_start,
+		on_tick = args.on_tick,
+		is_finished = args.is_finished,
+		on_done = args.on_done
+	}
+
+	t.co = cocreate(function()
+		t.state = "executing"
+		if t.on_start then t:on_start() end
+
+		-- si no hay on_tick, el task termina enseguida
+		local finished = false or not t.on_tick
+
+		while not finished do
+			t:on_tick()
+
+			if t.is_finished then
+				finished = t:is_finished()
+			else
+				finished = true
+			end
+
+			yield()
+		end
+
+		if t.on_done then t:on_done() end
+	end)
+
+	return t
 end
 
-function update_damage_counters()
-	for i = #dmg_counters, 1, -1 do
-		local elem = dmg_counters[i]
-		if elem then
-			elem.timer -= 1
+function taskmgr.add(t)
+	add(taskmgr.queue, t)
+end
 
-			if elem.timer <= 0 then
-				deli(dmg_counters, i)
+local function start_queued()
+	for t in all(taskmgr.queue) do
+		add(taskmgr.executing, t)
+		del(taskmgr.queue, t)
+	end
+end
+
+local function tick_executing()
+	for t in all(taskmgr.executing) do
+		local ok, err = coresume(t.co)
+
+		-- si explota la corutina, la sacamos
+		if not ok then
+			del(taskmgr.executing, t)
+		elseif costatus(t.co) == "dead" then
+			if t.next then
+				-- permitir secuencias: t.next = {t2, t3, ...} o un solo task
+				if type(t.next) == "table" and t.next[1] then
+					for nt in all(t.next) do
+						taskmgr.add(nt)
+					end
+				else
+					taskmgr.add(t.next)
+				end
+			end
+
+			del(taskmgr.executing, t)
+		end
+	end
+end
+
+function taskmgr.update()
+	start_queued()
+	tick_executing()
+end
+
+-- ===== helpers para usar dentro de corutinas =====
+function await(secs)
+	local frames = max(0, flr((secs or 0) * 30 + 0.5))
+	for i = 1, frames do
+		yield()
+	end
+end
+
+function lerp_char_pos(c, tx, ty, seconds)
+	local sx, sy = c.x, c.y
+	local frames = max(1, flr(seconds * stat(7) + 0.5))
+
+	for i = 1, frames do
+		local t = i / frames
+		c.x = sx + (tx - sx) * t
+		c.y = sy + (ty - sy) * t
+		yield()
+	end
+
+	c.x, c.y = tx, ty
+end
+
+-->8
+--actors
+-- instanciado, animacion de sprites y flotado
+
+tps = 4 -- ticks por frame de animacion
+
+players = {}
+enemies = {}
+
+function instance_char(tpl, slot)
+	local a = tcopy(tpl)
+	a.c_hp = a.c_hp or a.m_hp
+
+	if slot then
+		a.x = slot.x
+		a.y = slot.y
+	end
+
+	if tpl.is_flying then
+		a.base_y = a.y
+		a.float_t = 0
+		a.float_amp = 2
+		a.float_speed = 0.02
+	end
+
+	-- si el template tiene skillset, asumimos que es un PJ jugable
+	-- y le damos animacion tipo player
+	if tpl.skillset then
+		init_actor_anim(a, tpl.anim_frames)
+	end
+
+	return a
+end
+
+-- ===== animacion =====
+function init_actor_anim(a, anim_frames)
+	a.anim = {
+		id = "idle",
+		frame = 1,
+		ticker = 0,
+		looping = true
+	}
+	a.anim_frame_data = anim_frames
+end
+
+function start_actor_anim(a, anim_id, looping)
+	if not a or not a.anim then return end
+
+	a.anim.id = anim_id
+	a.anim.frame = 1
+	a.anim.ticker = 0
+
+	if looping ~= nil then
+		a.anim.looping = looping
+	end
+end
+
+function update_actor_anim(a)
+	if not a or not a.anim or not a.anim_frame_data then
+		return
+	end
+
+	a.anim.ticker += 1
+
+	if a.anim.ticker >= tps then
+		a.anim.ticker = 0
+		local cur = a.anim_frame_data[a.anim.id]
+		if not cur then return end
+
+		a.anim.frame += 1
+		if a.anim.frame > #cur then
+			if a.anim.looping then
+				a.anim.frame = 1
 			else
-				elem.vx += elem.ax
-				elem.vy += elem.ay
-				elem.x += elem.vx
-				elem.y += elem.vy
+				a.anim.frame = #cur
 			end
 		end
+
+		a.spr = cur[a.anim.frame]
 	end
-end
-
-function update_plan_cursors()
-	cursor_selection = {}
-
-	if nav_table_pointer ~= "target" then return end
-
-	local n = #npc_slots
-	if n == 0 then return end
-
-	nav_cursor_ix = mid(1, nav_cursor_ix, n)
-
-	local anchor = get_target_anchor(nav_cursor_ix)
-	if not anchor then return end
-
-	add(cursor_selection, anchor)
 end
 
 function update_floating(a)
@@ -468,21 +396,55 @@ function update_floating(a)
 	a.y = a.base_y + sin(a.float_t) * a.float_amp
 end
 
--- ===== helpers de estado - PLAN =====
-function cur_char_ix()
+function update_anims()
+	-- players
+	for p in all(players) do
+		update_actor_anim(p)
+	end
+
+	-- enemies
+	for e in all(enemies) do
+		update_actor_anim(e)
+		update_floating(e)
+	end
+end
+
+-->8
+--plan
+-- fase de planeamiento: armado de ordenes por PJ
+
+nav_order_stack = {}
+nav_table_pointer = ""
+nav_cursor_ix = 1
+current_order = nil
+show_flags = {}
+cursor_selection = {}
+
+function plan_update()
+	if not plan_accept() then
+		if not plan_cancel() then
+			plan_move()
+		end
+	end
+
+	plan_update_cursors()
+end
+
+-- ===== helpers de estado =====
+function plan_char_ix()
 	return #nav_order_stack + 1
 end
 
-function char_for_current()
-	return players[cur_char_ix()]
+function plan_char()
+	return players[plan_char_ix()]
 end
 
-function get_chain_for_partial()
+function plan_partial_chain()
 	-- devuelve la cadena de submenus de la orden parcial actual (o vacia)
 	if not current_order or #current_order.inputs == 0 then
 		return {}
 	end
-	local char = char_for_current()
+	local char = plan_char()
 	if not char then
 		return {}
 	end
@@ -491,41 +453,29 @@ function get_chain_for_partial()
 	return (cmd and cmd.tables) or {}
 end
 
-function derive_pointer_from_inputs(inputs)
-	-- setea nav_table_pointer/nav_cursor_ix segun el れむltimo input de "inputs"
-	if not inputs or #inputs == 0 then
-		nav_table_pointer = "command"
-		nav_cursor_ix = 1
-		return
-	end
-	local last = inputs[#inputs]
-	nav_table_pointer = last.type
-	nav_cursor_ix = last.input
-end
-
 -- cuando terminamos una orden parcial, la pusheamos al stack y preparamos el siguiente PJ
-function finalize_partial_and_advance()
+function plan_finalize_order()
 	if current_order and #current_order.inputs > 0 then
 		add(nav_order_stack, current_order)
 	end
 	current_order = nil
 
 	if #nav_order_stack >= #players then
-		start_exec_phase()
+		exec_start()
 	else
 		nav_table_pointer = "command"
 		nav_cursor_ix = 1
 	end
 end
 
-function push_step_and_advance()
+function plan_push_step()
 	add(current_order.inputs, { type = nav_table_pointer, input = nav_cursor_ix })
 
-	local chain = get_chain_for_partial()
+	local chain = plan_partial_chain()
 	local steps_done = #current_order.inputs - 1
 
 	if steps_done >= #chain then
-		finalize_partial_and_advance()
+		plan_finalize_order()
 	else
 		nav_table_pointer = chain[steps_done + 1]
 		nav_cursor_ix = 1
@@ -533,10 +483,10 @@ function push_step_and_advance()
 end
 
 -- ===== aceptar (A) =====
-function handle_accept()
+function plan_accept()
 	if not btnp(4) then return false end
 
-	local char = char_for_current()
+	local char = plan_char()
 	if not char then return true end
 
 	if nav_table_pointer == "command" then
@@ -548,12 +498,12 @@ function handle_accept()
 		current_order = { inputs = {} }
 	end
 
-	push_step_and_advance()
+	plan_push_step()
 	return true
 end
 
 -- ===== cancelar (B) =====
-function handle_cancel()
+function plan_cancel()
 	if not btnp(5) then return false end
 
 	-- si el PJ actual ya tenia inputs (ej: comando elegido, en target),
@@ -574,16 +524,16 @@ function handle_cancel()
 end
 
 -- ===== movimiento =====
-function handle_movement()
+function plan_move()
 	local d = 0
 	if btnp(2) then d = -1 end
 	if btnp(3) then d = 1 end
 	if d == 0 then return end
-	nav_cursor_ix = (nav_cursor_ix + d - 1) % current_table_size() + 1
+	nav_cursor_ix = (nav_cursor_ix + d - 1) % plan_table_size() + 1
 end
 
-function current_table_size()
-	local char = char_for_current()
+function plan_table_size()
+	local char = plan_char()
 	if not char then return 1 end
 
 	if nav_table_pointer == "command" then
@@ -598,7 +548,139 @@ function current_table_size()
 	return 1
 end
 
--- ===== execution =====
+-- ===== cursores de target =====
+function plan_update_cursors()
+	cursor_selection = {}
+
+	if nav_table_pointer ~= "target" then return end
+
+	local n = #npc_slots
+	if n == 0 then return end
+
+	nav_cursor_ix = mid(1, nav_cursor_ix, n)
+
+	local anchor = get_target_anchor(nav_cursor_ix)
+	if not anchor then return end
+
+	add(cursor_selection, anchor)
+end
+
+function get_target_count()
+	-- por ahora: usamos npc_slots como lista de navegacion
+	return #npc_slots
+end
+
+function get_target_anchor(ix)
+	local e = enemies[ix]
+	local slot = npc_slots[ix]
+	if not slot then return nil end
+
+	if e and e.anchors and e.anchors.cursor then
+		return {
+			x = slot.x + e.anchors.cursor.x,
+			y = slot.y + e.anchors.cursor.y,
+			flipped = e.anchors.cursor.flipped
+		}
+	end
+
+	return { x = slot.x, y = slot.y }
+end
+
+-->8
+--exec
+-- fase de ejecucion: ordenes -> tasks encadenados
+
+dmg_counters = {}
+
+function exec_start()
+	b_status = "exec"
+	cursor_selection = {} -- ocultar cursores de target durante exec
+
+	-- crear tasks en cadena
+	local first = nil
+	local prev = nil
+
+	for i = 1, #players do
+		local order = nav_order_stack[i]
+		local p = players[i]
+
+		-- si por algun motivo falta orden, salteamos
+		if order and p then
+			local cmd_ix = order_get_cmd_ix(order)
+			local cmd = p.skillset[cmd_ix]
+
+			if cmd and cmd.name == "attack" then
+				local target_ix = order_get_target_ix(order)
+				local target = enemies[target_ix]
+
+				local t = exec_task_attack(p, target)
+
+				if not first then first = t end
+				if prev then prev.next = t end
+				prev = t
+			end
+		end
+	end
+
+	-- al final: volver a plan y limpiar stack
+	local done = new_task {
+		on_start = function()
+			nav_order_stack = {}
+			current_order = nil
+			nav_table_pointer = "command"
+			nav_cursor_ix = 1
+			b_status = "plan"
+		end
+	}
+
+	if prev then
+		prev.next = done
+	else
+		first = done
+	end
+
+	taskmgr.add(first)
+end
+
+function order_get_cmd_ix(order)
+	return order.inputs[1] and order.inputs[1].input
+end
+
+function order_get_target_ix(order)
+	for step in all(order.inputs) do
+		if step.type == "target" then
+			return step.input
+		end
+	end
+	return 1
+end
+
+-- ===== tasks de acciones =====
+function exec_task_attack(attacker, target)
+	return new_task {
+		on_start = function(self)
+			await(0.15)
+
+			local ox, oy = attacker.x, attacker.y
+			lerp_char_pos(attacker, ox - 12, oy, 0.12)
+			await(0.25)
+
+			start_actor_anim(attacker, "attack", false)
+
+			--add_fx()
+			await(0.40)
+
+			add_damage_counter(target)
+
+			await(0.15)
+			start_actor_anim(attacker, "idle")
+			lerp_char_pos(attacker, ox, oy, 0.12)
+			await(0.30)
+		end
+	}
+end
+
+-- ===== contadores de danyo =====
 function add_damage_counter(target)
 	local anchor = get_char_fx_pos(target)
 	if anchor then
@@ -624,57 +706,42 @@ function add_damage_counter(target)
 	end
 end
 
-function start_exec_phase()
-  b_status = "exec"
-  cursor_selection = {} -- ocultar cursores de target durante exec
+function update_damage_counters()
+	for i = #dmg_counters, 1, -1 do
+		local elem = dmg_counters[i]
+		if elem then
+			elem.timer -= 1
 
-  -- crear tasks en cadena
-  local first = nil
-  local prev = nil
-
-  for i=1, #players do
-    local order = nav_order_stack[i]
-    local p = players[i]
-
-    -- si por algれむn motivo falta orden, salteamos
-    if order and p then
-      local cmd_ix = order_get_cmd_ix(order)
-      local cmd = p.skillset[cmd_ix]
-
-      if cmd and cmd.name == "attack" then
-        local target_ix = order_get_target_ix(order)
-        local target = enemies[target_ix]
-
-        local t = task_attack(p, target)
-
-        if not first then first = t end
-        if prev then prev.next = t end
-        prev = t
-      end
-    end
-  end
-
-  -- al final: volver a plan y limpiar stack
-  local done = new_task{
-    on_start = function()
-      nav_order_stack = {}
-      current_order = nil
-      nav_table_pointer = "command"
-      nav_cursor_ix = 1
-      b_status = "plan"
-    end
-  }
-
-  if prev then
-    prev.next = done
-  else
-    first = done
-  end
-
-  taskmgr.add(first)
+			if elem.timer <= 0 then
+				deli(dmg_counters, i)
+			else
+				elem.vx += elem.ax
+				elem.vy += elem.ay
+				elem.x += elem.vx
+				elem.y += elem.vy
+			end
+		end
+	end
 end
 
--- ===== dibujo =====
+function get_char_fx_pos(char)
+	if char then
+		local char_ax = char.anchors.fx.x
+		local char_ay = char.anchors.fx.y
+
+		if char_ax and char_ay then
+			return { x = char_ax, y = char_ay }
+		end
+	end
+
+	return nil
+end
+
+-->8
+--draw
+-- escena y UI
+
+-- ===== escena =====
 function draw_back()
 	rectfill(0, 0, 127, 35, 4)
 	rectfill(0, 36, 127, 127, 0)
@@ -699,10 +766,23 @@ function draw_party()
 	end
 end
 
-function draw_planning_ui()
+-- ===== ui =====
+function draw_ui()
+	-- siempre, sin importar fase
+	draw_damage_counters()
+
+	if b_status == "plan" then
+		draw_plan_ui()
+	elseif b_status == "exec" then
+		draw_exec_ui()
+	end
+end
+
+function draw_plan_ui()
 	draw_rounded_rect(0, 0, 127, 10, 1)
 	print(nav_table_pointer, 5, 3, 7)
-	draw_rounded_rect(0, 95, 127, 127, 1)
+	draw_rounded_rect(0, 95, 40, 127, 1)
+	draw_rounded_rect(42, 95, 127, 127, 1)
 	local flags = show_flags[nav_table_pointer]
 	if flags then
 		for _, fn in pairs(flags) do
@@ -711,38 +791,12 @@ function draw_planning_ui()
 	end
 end
 
-function draw_execution_ui()
-	
+function draw_exec_ui()
+
 end
-
-function draw_pointer_cursors()
-	for a in all(cursor_selection) do
-		spr(128, a.x, a.y, 1, 1, a.flipped or false)
-	end
-end
-
-function draw_damage_counters()
-	for i = 1, #dmg_counters do
-		local dmg = dmg_counters[i]
-		print(dmg.text, dmg.x, dmg.y, dmg.color_bg_fade)
-		print(dmg.text, dmg.x, dmg.y - 1, dmg.color_fg)
-	end
-end
-
-function draw_ui()
-  -- siempre, sin importar fase
-  draw_damage_counters()
-
-  if b_status == "plan" then
-    draw_planning_ui()
-  elseif b_status == "exec" then
-    draw_execution_ui()
-  end
-end
-
 
 function draw_command_texts()
-	local ix = cur_char_ix()
+	local ix = plan_char_ix()
 	if ix <= #players then
 		local cur_char = players[ix]
 		local cur_cmds = cur_char.skillset
@@ -765,7 +819,7 @@ function draw_stats()
 
 		local done_count = #nav_order_stack
 
-		if i == cur_char_ix() then
+		if i == plan_char_ix() then
 			print(ch.name, stats_x0 + 12, cy, 2)
 			print(ch.name, stats_x0 + 12, cy - 1, 7)
 		else
@@ -784,62 +838,23 @@ function draw_skill_sel()
 	print("skills go here", 10, 100, 7)
 end
 
--- ===== helpers varios =====
-function order_get_cmd_ix(order)
-  return order.inputs[1] and order.inputs[1].input
-end
-
-function order_get_target_ix(order)
-  for step in all(order.inputs) do
-    if step.type == "target" then
-      return step.input
-    end
-  end
-  return 1
-end
-
-function clamp(v, a, b)
-	return max(a, min(b, v))
-end
-
-function get_target_count()
-	-- por ahora: usamos npc_slots como lista de navegacion
-	return #npc_slots
-end
-
-function get_target_enemy(ix)
-	-- por ahora 1 slot == 1 enemigo (tu boss)
-	return enemies[ix]
-end
-
-function get_target_anchor(ix)
-	local e = enemies[ix]
-	local slot = npc_slots[ix]
-	if not slot then return nil end
-
-	if e and e.anchors and e.anchors.cursor then
-		return {
-			x = slot.x + e.anchors.cursor.x,
-			y = slot.y + e.anchors.cursor.y,
-			flipped = e.anchors.cursor.flipped
-		}
+function draw_pointer_cursors()
+	for a in all(cursor_selection) do
+		spr(128, a.x, a.y, 1, 1, a.flipped or false)
 	end
-
-	return { x = slot.x, y = slot.y }
 end
 
-function get_char_fx_pos(char)
-	if char then
-		local char_ax = char.anchors.fx.x
-		local char_ay = char.anchors.fx.y
-
-		if char_ax and char_ay then
-			return { x = char_ax, y = char_ay }
-		end
+function draw_damage_counters()
+	for i = 1, #dmg_counters do
+		local dmg = dmg_counters[i]
+		print(dmg.text, dmg.x, dmg.y, dmg.color_bg_fade)
+		print(dmg.text, dmg.x, dmg.y - 1, dmg.color_fg)
 	end
-
-	return nil
 end
+
+-->8
+--utils
+-- helpers genericos
 
 function seconds(s)
 	return s * stat(7)
@@ -851,31 +866,6 @@ function tcopy(t)
 		r[k] = type(v) == "table" and tcopy(v) or v
 	end
 	return r
-end
-
-function instance_char(tpl, slot)
-	local a = tcopy(tpl)
-	a.c_hp = a.c_hp or a.m_hp
-
-	if slot then
-		a.x = slot.x
-		a.y = slot.y
-	end
-
-	if tpl.is_flying then
-		a.base_y = a.y
-		a.float_t = 0
-		a.float_amp = 2
-		a.float_speed = 0.02
-	end
-
-	-- si el template tiene skillset, asumimos que es un PJ jugable
-	-- y le damos animacion tipo player
-	if tpl.skillset then
-		init_actor_anim(a, tpl.anim_frames)
-	end
-
-	return a
 end
 
 function draw_rounded_rect(x0, y0, x1, y1, c)
