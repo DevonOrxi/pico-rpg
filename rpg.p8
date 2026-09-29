@@ -556,17 +556,18 @@ end
 function handle_cancel()
 	if not btnp(5) then return false end
 
-	-- siempre descartamos lo parcial del PJ actual
+	-- si el PJ actual ya tenia inputs (ej: comando elegido, en target),
+	-- solo descartamos su orden parcial y volvemos a su menu command
+	local had_partial = current_order and #current_order.inputs > 0
 	current_order = nil
 
-	-- si hay un pj anterior ya confirmado, volvemos a ese PJ
-	if #nav_order_stack > 0 then
-		-- "cancelar todo su stack desde el comienzo":
-		-- sacamos su orden del stack (queda sin confirmar) y volvemos al menれむ command
+	-- si no habia parcial y hay un pj anterior ya confirmado, volvemos a ese PJ:
+	-- sacamos su orden del stack (queda sin confirmar) y volvemos al menu command
+	if not had_partial and #nav_order_stack > 0 then
 		del(nav_order_stack, nav_order_stack[#nav_order_stack])
 	end
 
-	-- UI base para el PJ actual (que ahora es el anterior, o el mismo si no habれとa)
+	-- UI base para el PJ actual (que ahora es el anterior, o el mismo si no habia)
 	nav_table_pointer = "command"
 	nav_cursor_ix = 1
 	return true
